@@ -3,6 +3,7 @@
  */
 
 #include "color/ColorUtil.h"
+#include "voxelformat/private/mesh/Mesh.h"
 #include "voxelformat/private/mesh/MeshFormat.h"
 #include "color/Color.h"
 #include "core/ConfigVar.h"
@@ -16,6 +17,7 @@
 #include "video/ShapeBuilder.h"
 #include "voxel/MaterialColor.h"
 #include "voxel/RawVolume.h"
+#include "voxel/Voxel.h"
 #include "voxelformat/VolumeFormat.h"
 #include "voxelformat/private/mesh/MeshMaterial.h"
 #include "voxelformat/tests/AbstractFormatTest.h"
@@ -176,6 +178,7 @@ TEST_F(MeshFormatTest, testVoxelizeColor) {
 	ASSERT_NE(nullptr, node);
 	const voxel::RawVolume *v = node->volume();
 	const palette::Palette &nodePal = node->palette();
+	EXPECT_EQ(v->voxel(0, 0, 0).getNormal(), NO_NORMAL);
 	EXPECT_COLOR_NEAR(nipponRed, nodePal.color(v->voxel(0, 0, 0).getColor()), 0.06f);
 	EXPECT_COLOR_NEAR(nipponRed, nodePal.color(v->voxel(size * 2 - 1, 0, size * 2 - 1).getColor()), 0.06f);
 	EXPECT_COLOR_NEAR(nipponBlue, nodePal.color(v->voxel(0, 0, size * 2 - 1).getColor()), 0.06f);
@@ -252,6 +255,231 @@ TEST_F(MeshFormatTest, testVoxelizeChunked) {
 	}
 	EXPECT_GT(modelCount, 1) << "Chunked voxelization should produce multiple chunk nodes";
 	EXPECT_GT(totalVoxels, 0) << "Chunks should contain voxels";
+}
+
+static void addColoredQuad(Mesh &mesh, const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c, const glm::vec3 &d,
+						   color::RGBA color) {
+	voxelformat::MeshTri t0;
+	t0.setVertices(a, b, c);
+	t0.setColor(color, color, color);
+	mesh.addTriangle(t0);
+	voxelformat::MeshTri t1;
+	t1.setVertices(a, c, d);
+	t1.setColor(color, color, color);
+	mesh.addTriangle(t1);
+}
+
+TEST_F(MeshFormatTest, testSolidFillsInteriorWithSurfaceColor) {
+	class TestMesh : public MeshFormat {
+	public:
+		bool saveMeshes(const core::Map<int, int> &, const scenegraph::SceneGraph &, const ChunkMeshes &,
+						const core::String &, const io::ArchivePtr &, const glm::vec3 &, bool, bool, bool) override {
+			return false;
+		}
+		void voxelize(scenegraph::SceneGraph &sceneGraph, Mesh &&mesh) {
+			voxelizeMesh("solidbox", sceneGraph, core::move(mesh));
+			sceneGraph.updateTransforms();
+		}
+	};
+
+	util::ScopedVarChange modeVar(cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::Solid);
+	util::ScopedVarChange fillVar(cfg::VoxformatFillHollow, "true");
+	util::ScopedVarChange paletteVar(cfg::VoxelCreatePalette, "true");
+
+	const color::RGBA red(200, 40, 40, 255);
+	const float s = 8.0f;
+	Mesh mesh;
+	addColoredQuad(mesh, {0, 0, 0}, {s, 0, 0}, {s, 0, s}, {0, 0, s}, red);
+	addColoredQuad(mesh, {0, s, 0}, {0, s, s}, {s, s, s}, {s, s, 0}, red);
+	addColoredQuad(mesh, {0, 0, 0}, {0, s, 0}, {s, s, 0}, {s, 0, 0}, red);
+	addColoredQuad(mesh, {0, 0, s}, {s, 0, s}, {s, s, s}, {0, s, s}, red);
+	addColoredQuad(mesh, {0, 0, 0}, {0, 0, s}, {0, s, s}, {0, s, 0}, red);
+	addColoredQuad(mesh, {s, 0, 0}, {s, s, 0}, {s, s, s}, {s, 0, s}, red);
+
+	TestMesh testMesh;
+	scenegraph::SceneGraph sceneGraph;
+	testMesh.voxelize(sceneGraph, core::move(mesh));
+	scenegraph::SceneGraphNode *node = sceneGraph.findNodeByName("solidbox");
+	ASSERT_NE(nullptr, node);
+	const voxel::RawVolume *v = node->volume();
+	ASSERT_NE(nullptr, v);
+
+	int solidCount = 0;
+	int surfaceRed = 0;
+	const palette::Palette &pal = node->palette();
+	voxelutil::visitVolume(
+		*v,
+		[&](int, int, int, const voxel::Voxel &voxel) {
+			++solidCount;
+			const color::RGBA c = pal.color(voxel.getColor());
+			const int dr = (int)c.r > (int)red.r ? (int)c.r - (int)red.r : (int)red.r - (int)c.r;
+			const int dg = (int)c.g > (int)red.g ? (int)c.g - (int)red.g : (int)red.g - (int)c.g;
+			const int db = (int)c.b > (int)red.b ? (int)c.b - (int)red.b : (int)red.b - (int)c.b;
+			if (dr + dg + db < 48) {
+				++surfaceRed;
+			}
+		},
+		voxelutil::VisitSolid());
+
+	// Surface-only would be roughly 6*8*8 = 384; a filled 8^3 is 512.
+	EXPECT_GT(solidCount, 400);
+	EXPECT_GT(surfaceRed, 100);
+
+	const glm::ivec3 center = v->region().getCenter();
+	const voxel::Voxel centerVoxel = v->voxel(center);
+	ASSERT_FALSE(voxel::isAir(centerVoxel.getMaterial()));
+	EXPECT_EQ(centerVoxel.getNormal(), NO_NORMAL);
+	int withNormal = 0;
+	voxelutil::visitVolume(
+		*v,
+		[&](int, int, int, const voxel::Voxel &voxel) {
+			if (voxel.getNormal() != NO_NORMAL) {
+				++withNormal;
+			}
+		},
+		voxelutil::VisitSolid());
+	EXPECT_EQ(0, withNormal) << "Mesh voxelize must not stamp triangle normals onto cubes";
+	EXPECT_COLOR_NEAR(color::RGBA(255, 255, 255, 255), pal.color(centerVoxel.getColor()), 0.05f);
+	EXPECT_COLOR_NEAR(red, pal.color(v->voxel(v->region().getLowerX(), v->region().getCenter().y,
+											 v->region().getCenter().z)
+										.getColor()),
+					  0.12f);
+}
+
+TEST_F(MeshFormatTest, testSolidNearestSurfaceColor) {
+	class TestMesh : public MeshFormat {
+	public:
+		bool saveMeshes(const core::Map<int, int> &, const scenegraph::SceneGraph &, const ChunkMeshes &,
+						const core::String &, const io::ArchivePtr &, const glm::vec3 &, bool, bool, bool) override {
+			return false;
+		}
+		void voxelize(scenegraph::SceneGraph &sceneGraph, Mesh &&mesh) {
+			voxelizeMesh("nearest", sceneGraph, core::move(mesh));
+			sceneGraph.updateTransforms();
+		}
+	};
+
+	util::ScopedVarChange modeVar(cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::Solid);
+	util::ScopedVarChange fillVar(cfg::VoxformatFillHollow, "false");
+	util::ScopedVarChange paletteVar(cfg::VoxelCreatePalette, "true");
+
+	const color::RGBA red(220, 20, 20, 255);
+	const color::RGBA blue(20, 20, 220, 255);
+	Mesh mesh;
+	// Two disjoint quads far apart on Z so nearest-surface color is unambiguous.
+	addColoredQuad(mesh, {0, 0, 0}, {4, 0, 0}, {4, 4, 0}, {0, 4, 0}, red);
+	addColoredQuad(mesh, {0, 0, 12}, {4, 0, 12}, {4, 4, 12}, {0, 4, 12}, blue);
+
+	TestMesh testMesh;
+	scenegraph::SceneGraph sceneGraph;
+	testMesh.voxelize(sceneGraph, core::move(mesh));
+	scenegraph::SceneGraphNode *node = sceneGraph.findNodeByName("nearest");
+	ASSERT_NE(nullptr, node);
+	const voxel::RawVolume *v = node->volume();
+	ASSERT_NE(nullptr, v);
+	const palette::Palette &pal = node->palette();
+
+	const voxel::Voxel nearRed = v->voxel(v->region().getLowerX() + 2, v->region().getLowerY() + 2,
+										  v->region().getLowerZ());
+	const voxel::Voxel nearBlue = v->voxel(v->region().getLowerX() + 2, v->region().getLowerY() + 2,
+										   v->region().getUpperZ());
+	ASSERT_FALSE(voxel::isAir(nearRed.getMaterial()));
+	ASSERT_FALSE(voxel::isAir(nearBlue.getMaterial()));
+	EXPECT_COLOR_NEAR(red, pal.color(nearRed.getColor()), 0.1f);
+	EXPECT_COLOR_NEAR(blue, pal.color(nearBlue.getColor()), 0.1f);
+}
+
+TEST_F(MeshFormatTest, testSolidInteriorUsesNearestSurface) {
+	class TestMesh : public MeshFormat {
+	public:
+		bool saveMeshes(const core::Map<int, int> &, const scenegraph::SceneGraph &, const ChunkMeshes &,
+						const core::String &, const io::ArchivePtr &, const glm::vec3 &, bool, bool, bool) override {
+			return false;
+		}
+		void voxelize(scenegraph::SceneGraph &sceneGraph, Mesh &&mesh) {
+			voxelizeMesh("nearestinterior", sceneGraph, core::move(mesh));
+			sceneGraph.updateTransforms();
+		}
+	};
+
+	util::ScopedVarChange modeVar(cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::Solid);
+	util::ScopedVarChange fillVar(cfg::VoxformatFillHollow, "true");
+	util::ScopedVarChange paletteVar(cfg::VoxelCreatePalette, "true");
+
+	const color::RGBA red(220, 20, 20, 255);
+	const color::RGBA blue(20, 20, 220, 255);
+	const color::RGBA gray(140, 140, 140, 255);
+	const float s = 8.0f;
+	Mesh mesh;
+	addColoredQuad(mesh, {0, 0, 0}, {s, 0, 0}, {s, 0, s}, {0, 0, s}, blue);
+	addColoredQuad(mesh, {0, s, 0}, {0, s, s}, {s, s, s}, {s, s, 0}, red);
+	addColoredQuad(mesh, {0, 0, 0}, {0, s, 0}, {s, s, 0}, {s, 0, 0}, gray);
+	addColoredQuad(mesh, {0, 0, s}, {s, 0, s}, {s, s, s}, {0, s, s}, gray);
+	addColoredQuad(mesh, {0, 0, 0}, {0, 0, s}, {0, s, s}, {0, s, 0}, gray);
+	addColoredQuad(mesh, {s, 0, 0}, {s, s, 0}, {s, s, s}, {s, 0, s}, gray);
+
+	TestMesh testMesh;
+	scenegraph::SceneGraph sceneGraph;
+	testMesh.voxelize(sceneGraph, core::move(mesh));
+	scenegraph::SceneGraphNode *node = sceneGraph.findNodeByName("nearestinterior");
+	ASSERT_NE(nullptr, node);
+	const voxel::RawVolume *v = node->volume();
+	ASSERT_NE(nullptr, v);
+	const palette::Palette &pal = node->palette();
+
+	const int x = v->region().getLowerX() + 4;
+	const int z = v->region().getLowerZ() + 4;
+	const voxel::Voxel top = v->voxel(x, v->region().getUpperY(), z);
+	const voxel::Voxel bottom = v->voxel(x, v->region().getLowerY(), z);
+	const voxel::Voxel center = v->voxel(x, v->region().getCenter().y, z);
+	ASSERT_FALSE(voxel::isAir(top.getMaterial()));
+	ASSERT_FALSE(voxel::isAir(bottom.getMaterial()));
+	ASSERT_FALSE(voxel::isAir(center.getMaterial()));
+	EXPECT_COLOR_NEAR(red, pal.color(top.getColor()), 0.12f);
+	EXPECT_COLOR_NEAR(blue, pal.color(bottom.getColor()), 0.12f);
+	EXPECT_COLOR_NEAR(color::RGBA(255, 255, 255, 255), pal.color(center.getColor()), 0.05f);
+}
+
+TEST_F(MeshFormatTest, testSolidPrefersDominantTriangle) {
+	class TestMesh : public MeshFormat {
+	public:
+		bool saveMeshes(const core::Map<int, int> &, const scenegraph::SceneGraph &, const ChunkMeshes &,
+						const core::String &, const io::ArchivePtr &, const glm::vec3 &, bool, bool, bool) override {
+			return false;
+		}
+		void voxelize(scenegraph::SceneGraph &sceneGraph, Mesh &&mesh) {
+			voxelizeMesh("dominant", sceneGraph, core::move(mesh));
+			sceneGraph.updateTransforms();
+		}
+	};
+
+	util::ScopedVarChange modeVar(cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::Solid);
+	util::ScopedVarChange fillVar(cfg::VoxformatFillHollow, "false");
+	util::ScopedVarChange paletteVar(cfg::VoxelCreatePalette, "true");
+
+	const color::RGBA red(220, 20, 20, 255);
+	const color::RGBA blue(20, 20, 220, 255);
+	Mesh mesh;
+	addColoredQuad(mesh, {0, 0, 0}, {8, 0, 0}, {8, 8, 0}, {0, 8, 0}, red);
+	// Tiny sliver in the middle of the same plane - must not win the voxel color.
+	voxelformat::MeshTri sliver;
+	sliver.setVertices(glm::vec3(3.9f, 3.9f, 0.0f), glm::vec3(4.1f, 3.9f, 0.0f), glm::vec3(4.0f, 4.1f, 0.0f));
+	sliver.setColor(blue, blue, blue);
+	mesh.addTriangle(sliver);
+
+	TestMesh testMesh;
+	scenegraph::SceneGraph sceneGraph;
+	testMesh.voxelize(sceneGraph, core::move(mesh));
+	scenegraph::SceneGraphNode *node = sceneGraph.findNodeByName("dominant");
+	ASSERT_NE(nullptr, node);
+	const voxel::RawVolume *v = node->volume();
+	ASSERT_NE(nullptr, v);
+	const palette::Palette &pal = node->palette();
+
+	const voxel::Voxel mid = v->voxel(v->region().getLowerX() + 4, v->region().getLowerY() + 4,
+									  v->region().getLowerZ());
+	ASSERT_FALSE(voxel::isAir(mid.getMaterial()));
+	EXPECT_COLOR_NEAR(red, pal.color(mid.getColor()), 0.1f);
 }
 
 TEST_F(MeshFormatTest, testSaveAsPointCloudUsesVoxelCenters) {

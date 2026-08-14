@@ -9,12 +9,11 @@
 
 namespace voxelrender {
 
-scenegraph::SceneGraphNodeCamera toCameraNode(const video::Camera &camera) {
-	scenegraph::SceneGraphNodeCamera cameraNode;
-	const scenegraph::KeyFrameIndex keyFrameIdx = 0;
+void applyCameraToNode(const video::Camera &camera, scenegraph::SceneGraphNodeCamera &cameraNode,
+					   scenegraph::KeyFrameIndex keyFrameIdx) {
 	scenegraph::SceneGraphTransform transform;
-	transform.setWorldTranslation(camera.eye());
-	transform.setWorldOrientation(camera.orientation());
+	transform.setWorldTranslation(camera.worldPosition());
+	transform.setWorldOrientation(glm::quat(camera.orientation()));
 	cameraNode.setTransform(keyFrameIdx, transform);
 
 	cameraNode.setAspectRatio(camera.aspect());
@@ -28,6 +27,14 @@ scenegraph::SceneGraphNodeCamera toCameraNode(const video::Camera &camera) {
 		cameraNode.setPerspective();
 	}
 	cameraNode.setFieldOfView((int)camera.fieldOfView());
+	cameraNode.setTargetRotation(camera.rotationType() == video::CameraRotationType::Target);
+	cameraNode.setTarget(camera.target());
+	cameraNode.setTargetDistance(camera.targetDistance());
+}
+
+scenegraph::SceneGraphNodeCamera toCameraNode(const video::Camera &camera) {
+	scenegraph::SceneGraphNodeCamera cameraNode;
+	applyCameraToNode(camera, cameraNode, 0);
 	cameraNode.setName("new camera");
 	return cameraNode;
 }
@@ -118,6 +125,13 @@ static video::Camera toCamera(const glm::ivec2 &size, const scenegraph::SceneGra
 	const int fovDegree = cameraNode.fieldOfView();
 	if (fovDegree > 0) {
 		camera.setFieldOfView((float)fovDegree);
+	}
+	if (cameraNode.isTargetRotation()) {
+		camera.setTarget(cameraNode.target());
+		camera.setTargetDistance(cameraNode.targetDistance());
+		camera.setRotationType(video::CameraRotationType::Target);
+	} else {
+		camera.setRotationType(video::CameraRotationType::Eye);
 	}
 	camera.update(0.0);
 	return camera;

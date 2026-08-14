@@ -6,6 +6,7 @@
 #include "app/App.h"
 #include "color/ColorUtil.h"
 #include "core/Assert.h"
+#include "core/Common.h"
 #include "color/Color.h"
 #include "core/Log.h"
 #include "core/StandardLib.h"
@@ -22,6 +23,7 @@
 #include "io/FormatDescription.h"
 #include "io/MemoryReadStream.h"
 #include "io/Stream.h"
+#include <glm/common.hpp>
 
 #include <glm/common.hpp>
 #include <glm/ext/scalar_common.hpp>
@@ -100,6 +102,108 @@ color::RGBA Image::colorAt(int x, int y) const {
 color::RGBA Image::colorAt(const glm::vec2 &uv, TextureWrap wrapS, TextureWrap wrapT, bool originUpperLeft) const {
 	const glm::ivec2 pc = pixels(uv, wrapS, wrapT, originUpperLeft);
 	return colorAt(pc.x, pc.y);
+}
+
+static int wrapTexel(int v, int size, TextureWrap wrap) {
+	if (size <= 0) {
+		return 0;
+	}
+	if (wrap == TextureWrap::ClampToEdge) {
+		return glm::clamp(v, 0, size - 1);
+	}
+	if (wrap == TextureWrap::Repeat) {
+		v %= size;
+		if (v < 0) {
+			v += size;
+		}
+		return v;
+	}
+	if (wrap == TextureWrap::MirroredRepeat) {
+		const int period = size * 2;
+		v %= period;
+		if (v < 0) {
+			v += period;
+		}
+		if (v >= size) {
+			v = period - 1 - v;
+		}
+		return v;
+	}
+	return 0;
+}
+
+color::RGBA Image::colorAtBilinear(const glm::vec2 &uv, TextureWrap wrapS, TextureWrap wrapT,
+								   bool originUpperLeft) const {
+	const int w = width();
+	const int h = height();
+	if (w <= 0 || h <= 0) {
+		return color::RGBA(0, 0, 0, 0);
+	}
+
+	float fx;
+	float fy;
+	if (originUpperLeft) {
+		fx = uv.x * (float)w - 0.5f;
+		fy = uv.y * (float)h - 0.5f;
+	} else {
+		fx = uv.x * (float)(w - 1);
+		fy = (1.0f - uv.y) * (float)(h - 1);
+	}
+
+	const int x0 = (int)glm::floor(fx);
+	const int y0 = (int)glm::floor(fy);
+	const int x1 = x0 + 1;
+	const int y1 = y0 + 1;
+	const float tx = fx - (float)x0;
+	const float ty = fy - (float)y0;
+
+	const color::RGBA c00 = colorAt(wrapTexel(x0, w, wrapS), wrapTexel(y0, h, wrapT));
+	const color::RGBA c10 = colorAt(wrapTexel(x1, w, wrapS), wrapTexel(y0, h, wrapT));
+	const color::RGBA c01 = colorAt(wrapTexel(x0, w, wrapS), wrapTexel(y1, h, wrapT));
+	const color::RGBA c11 = colorAt(wrapTexel(x1, w, wrapS), wrapTexel(y1, h, wrapT));
+	const color::RGBA c0 = color::RGBA::mix(c00, c10, tx);
+	const color::RGBA c1 = color::RGBA::mix(c01, c11, tx);
+	return color::RGBA::mix(c0, c1, ty);
+}
+
+color::RGBA Image::colorAtMaxChroma(const glm::vec2 &uv, TextureWrap wrapS, TextureWrap wrapT,
+									bool originUpperLeft) const {
+	const int w = width();
+	const int h = height();
+	if (w <= 0 || h <= 0) {
+		return color::RGBA(0, 0, 0, 0);
+	}
+
+	float fx;
+	float fy;
+	if (originUpperLeft) {
+		fx = uv.x * (float)w - 0.5f;
+		fy = uv.y * (float)h - 0.5f;
+	} else {
+		fx = uv.x * (float)(w - 1);
+		fy = (1.0f - uv.y) * (float)(h - 1);
+	}
+
+	const int x0 = (int)glm::floor(fx);
+	const int y0 = (int)glm::floor(fy);
+	const color::RGBA c[4] = {colorAt(wrapTexel(x0, w, wrapS), wrapTexel(y0, h, wrapT)),
+							  colorAt(wrapTexel(x0 + 1, w, wrapS), wrapTexel(y0, h, wrapT)),
+							  colorAt(wrapTexel(x0, w, wrapS), wrapTexel(y0 + 1, h, wrapT)),
+							  colorAt(wrapTexel(x0 + 1, w, wrapS), wrapTexel(y0 + 1, h, wrapT))};
+	int best = 0;
+	int bestChroma = -1;
+	int bestValue = -1;
+	for (int i = 0; i < 4; ++i) {
+		const int mx = (int)core_max(c[i].r, core_max(c[i].g, c[i].b));
+		const int mn = (int)core_min(c[i].r, core_min(c[i].g, c[i].b));
+		const int chroma = mx - mn;
+		if (chroma > bestChroma || (chroma == bestChroma && mx > bestValue)) {
+			bestChroma = chroma;
+			bestValue = mx;
+			best = i;
+		}
+	}
+	return c[best];
 }
 
 bool writePNG(const image::ImagePtr &image, io::SeekableWriteStream &stream) {
@@ -394,9 +498,16 @@ glm::ivec2 Image::pixels(const glm::vec2 &uv, TextureWrap wrapS, TextureWrap wra
 
 glm::ivec2 Image::pixels(const glm::vec2 &uv, int w, int h, TextureWrap wrapS, TextureWrap wrapT,
 						 bool originUpperLeft) {
-	int xint = (int)glm::round(uv.x * (w - 1));
-	int yint = (int)glm::round(uv.y * (h - 1));
-	if (!originUpperLeft) {
+	int xint;
+	int yint;
+	if (originUpperLeft) {
+		// glTF / D3D: (0,0) is the upper-left of texel 0. Point sample with floor(uv * size)
+		// so atlas UVs do not snap into the neighboring island or gutter.
+		xint = (int)glm::floor(uv.x * (float)w);
+		yint = (int)glm::floor(uv.y * (float)h);
+	} else {
+		xint = (int)glm::round(uv.x * (float)(w - 1));
+		yint = (int)glm::round(uv.y * (float)(h - 1));
 		yint = h - 1 - yint;
 	}
 	switch (wrapS) {
@@ -452,14 +563,19 @@ glm::vec2 Image::uv(int x, int y, bool originUpperLeft) const {
 
 glm::vec2 Image::uv(int x, int y, int w, int h, bool originUpperLeft) {
 	float u = 0.0f;
-	if (w > 1) {
-		u = ((float)x) / (float)(w - 1);
-	}
 	float v = 0.0f;
-	if (h > 1) {
-		if (originUpperLeft) {
+	if (originUpperLeft) {
+		if (w > 0) {
+			u = ((float)x) / (float)w;
+		}
+		if (h > 0) {
 			v = ((float)y) / (float)h;
-		} else {
+		}
+	} else {
+		if (w > 1) {
+			u = ((float)x) / (float)(w - 1);
+		}
+		if (h > 1) {
 			v = ((float)h - 1.0f - (float)y) / (float)(h - 1);
 		}
 	}

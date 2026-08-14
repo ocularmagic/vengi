@@ -8,6 +8,7 @@
 #include "color/RGBA.h"
 #include "core/Endian.h"
 #include "core/collection/BufferView.h"
+#include <glm/vec4.hpp>
 #include <gtest/gtest.h>
 
 namespace color {
@@ -196,6 +197,17 @@ TEST_F(ColorUtilTest, testSrgbToLinear) {
 	EXPECT_NEAR(1.0, color::srgbToLinear(255), 0.0001);
 	// 127/255 = ~0.498. Linear approx ~0.2122
 	EXPECT_NEAR(0.2122, color::srgbToLinear(127), 0.001);
+}
+
+TEST_F(ColorUtilTest, testLinearToSrgb) {
+	EXPECT_EQ(0, color::linearToSrgb(0.0f));
+	EXPECT_EQ(255, color::linearToSrgb(1.0f));
+	// Inverse of srgbToLinear(127) ~= 0.2122
+	EXPECT_NEAR(127, (int)color::linearToSrgb(0.2122f), 1);
+	const color::RGBA mid = color::linearToSrgb(glm::vec4(0.5f, 0.5f, 0.5f, 1.0f));
+	// linear 0.5 is sRGB ~188, not 128. Midtones written as linear*255 look crushed.
+	EXPECT_NEAR(188, (int)mid.r, 2);
+	EXPECT_EQ(255, mid.a);
 }
 
 TEST_F(ColorUtilTest, testRgbToXyz) {

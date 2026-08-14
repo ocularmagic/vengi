@@ -195,6 +195,14 @@ protected:
 	 */
 	void voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &posMap, const MeshMaterialArray &meshMaterialArray, bool fillHollow) const;
 
+	/**
+	 * Occupancy (inside / surface band) then nearest-surface UV albedo
+	 * (point sample). Interiors are solid white and do not vote on the palette.
+	 */
+	void voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Region &region, const MeshTriCollection &tris,
+					   const MeshMaterialArray &meshMaterialArray, const palette::NormalPalette &normalPalette,
+					   bool fillHollow) const;
+
 	int voxelizeNodeChunked(const core::String &name, scenegraph::SceneGraph &sceneGraph,
 							MeshTriCollection &&tris, const MeshMaterialArray &meshMaterialArray,
 							const glm::vec3 &trisMins, const voxel::Region &region,
@@ -207,7 +215,7 @@ public:
 	bool saveGroups(const scenegraph::SceneGraph &sceneGraph, const core::String &filename,
 					const io::ArchivePtr &archive, const SaveContext &ctx) override;
 
-	enum VoxelizeMode { HighQuality = 0, Fast = 1 };
+	enum VoxelizeMode { HighQuality = 0, Fast = 1, Solid = 2 };
 };
 
 } // namespace voxelformat

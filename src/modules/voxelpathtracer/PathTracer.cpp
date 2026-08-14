@@ -16,6 +16,7 @@
 #include "scenegraph/SceneGraphNode.h"
 #include "scenegraph/SceneGraphNodeProperties.h"
 #include "video/Camera.h"
+#include "core/GLM.h"
 #include "voxel/ChunkMesh.h"
 #include "voxel/Mesh.h"
 #include "voxel/RawVolume.h"
@@ -172,34 +173,49 @@ void PathTracer::addCamera(const char *name, const video::Camera &cam) {
 	scene.camera_names.emplace_back(name);
 	yocto::camera_data &camera = scene.cameras.emplace_back();
 
-	const yocto::vec3f &from = priv::toVec3f(cam.eye());
-	const yocto::vec3f &to = priv::toVec3f(cam.target());
-	const yocto::vec3f &up = priv::toVec3f(cam.up());
-	camera.frame = yocto::lookat_frame(from, to, up);
-	camera.aspect = (float)cam.size().x / (float)cam.size().y;
+	// Copy the editor view matrix. Reconstructing with lookat(eye, target)
+	// misses the real orientation when the orbit pivot is not along the view
+	// axis, which makes the path tracer sit at a flatter angle than the viewport.
+	video::Camera updated = cam;
+	updated.update(0.0);
+	const glm::mat4 &invView = updated.inverseViewMatrix();
+	camera.frame.x = priv::toVec3f(glm::vec3(invView[0]));
+	camera.frame.y = priv::toVec3f(glm::vec3(invView[1]));
+	camera.frame.z = priv::toVec3f(glm::vec3(invView[2]));
+	camera.frame.o = priv::toVec3f(glm::vec3(invView[3]));
+
+	const glm::ivec2 size = glm::max(updated.size(), glm::ivec2(1, 1));
+	// Yocto wants width/height. video::Camera::aspect() is inverted for perspective.
+	camera.aspect = (float)size.x / (float)size.y;
 	camera.aperture = _state->aperture;
 
-	camera.orthographic = cam.isOrthographic();
+	camera.orthographic = updated.isOrthographic();
 	if (camera.orthographic) {
-		camera.film = cam.size().x;
-		if (cam.rotationType() == video::CameraRotationType::Target) {
-			camera.focus = cam.targetDistance();
+		camera.film = (float)size.x;
+		if (updated.rotationType() == video::CameraRotationType::Target) {
+			camera.focus = updated.targetDistance();
 		} else {
-			camera.focus = cam.farPlane();
+			camera.focus = updated.farPlane();
 		}
 		camera.lens = camera.film / camera.focus;
 	} else {
 		camera.film = 0.036f;
-		float distance = camera.film / (2.0f * glm::tan(cam.fieldOfView() / 2.0f));
-		if (camera.aspect > 1.0f) {
-			distance /= camera.aspect;
+		// Match glm::perspectiveFovRH: fieldOfView() is vertical, in degrees.
+		// Yocto stores film as the long side; divide by aspect when landscape
+		// so the vertical film is film/aspect.
+		const float fovRadians = glm::radians(updated.fieldOfView());
+		float lens = camera.film / (2.0f * glm::tan(fovRadians / 2.0f));
+		if (camera.aspect >= 1.0f) {
+			lens /= camera.aspect;
 		}
-		if (cam.rotationType() == video::CameraRotationType::Target) {
-			camera.focus = cam.targetDistance();
+		if (updated.rotationType() == video::CameraRotationType::Target) {
+			camera.focus = updated.targetDistance();
 		} else {
-			camera.focus = cam.farPlane();
+			camera.focus = updated.farPlane();
 		}
-		camera.lens = camera.focus * distance / (camera.focus + distance);
+		// Pinhole lens. Do not apply the thin-lens focus formula here: that
+		// changes FOV and is only needed when aperture > 0.
+		camera.lens = lens;
 	}
 }
 
@@ -334,7 +350,7 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 	}
 
 	if (camera) {
-		addCamera("default", *camera);
+		addCamera("viewport", *camera);
 	}
 
 	for (auto iter = sceneGraph.begin(scenegraph::SceneGraphNodeType::Camera); iter != sceneGraph.end(); ++iter) {
@@ -342,7 +358,8 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 		addCamera(scenegraph::toCameraNode(node));
 	}
 
-	if (_state->scene.cameras.size() <= 1) {
+	// Only invent a framed fallback when nothing else is available.
+	if (_state->scene.cameras.empty()) {
 		yocto::add_camera(_state->scene);
 	}
 
@@ -365,6 +382,10 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 	environment.emission = {1, 1, 1};
 	environment.emission_tex = (int)_state->scene.textures.size() - 1;
 	environment.frame = yocto::rotation_frame({0, 1, 0}, _state->sunAzimuth);
+
+	if (_state->params.camera < 0 || _state->params.camera >= (int)_state->scene.cameras.size()) {
+		_state->params.camera = 0;
+	}
 
 	return true;
 }

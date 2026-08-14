@@ -19,6 +19,14 @@ palette::Palette toPalette(const palette::ColorPalette &colorPalette);
  * PaletteMaxColors. If @c targetColors is <= 0, the full PaletteMaxColors limit is used.
  */
 palette::Palette toPaletteQuantized(const palette::ColorPalette &colorPalette, int targetColors);
+/**
+ * Build a palette from per-voxel samples (duplicates count as frequency).
+ * Exact sample colors are counted and grouped by hue (plus a neutral gray
+ * family). Each family gets slots in proportion to its voxel count, then a
+ * gap-split median cut builds a ramp. Each slot is the most common exact
+ * color in its cluster. @c targetColors <= 0 means 256.
+ */
+palette::Palette toPaletteWeighted(const color::RGBA *samples, size_t sampleCount, int targetColors);
 
 template<class PaletteType>
 static void writeJson(io::WriteStream &out, const PaletteType &palette) {

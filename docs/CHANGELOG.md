@@ -39,9 +39,27 @@ General:
    - Added support for Luanti WorldEdit `we` files
    - Added support for BrickLink Studio `io` lego archives
    - Added support for Digital designer lego files (`lxf`, `lxfml`)
+   - Added solid mesh voxelization (`voxformat_voxelizemode` `2`): occupancy then nearest-surface albedo
+   - Textured mesh import (glTF/GLB and others) uses solid voxelization by default
+   - Solid mesh color samples the closest point on the whole mesh (Blender Sample Nearest Surface)
+   - Solid textured import samples albedo with a 2x2 highest-chroma texel (not an average)
+   - Mesh voxel palettes build hue-proportional ramps (default 256) and remap voxels with HSB distance
+   - Mesh palette slots use the most common color in each cluster, not the average
+   - Solid interiors are white and do not vote on the palette
+   - Mesh voxelize no longer stamps triangle normals onto cubes
+   - Cubic viewport lighting uses the visible cube face so `.vengi` matches `.vox` display
+   - PNG plane slices are top-to-bottom (Y); each image is an XZ cut
+   - PNG slice export hollows buried exact-white interiors and keeps a 1-voxel liner (`voxformat_imageslicehollowinterior`)
+   - glTF `baseColor` is sampled as sRGB (linear factor multiply, then OETF; identity factor is a no-op)
+   - glTF/GLB UVs use the upper-left origin and floor texel selection (GL_NEAREST style)
+   - Embedded glTF/GLB images load from the buffer (no temp PNG extract)
 
 VoxEdit:
 
+   - Camera nodes store Target/Eye movement and update their view while selected
+   - Path tracer start uses the last focused viewport camera and matches that view
+   - Path tracer framing matches the editor view matrix and fits the image in the Render panel
+   - Removed the live FPS readout from the status bar
    - Fixed massive performance issue with multiple viewports
    - Added the last recently used 10 colors to the viewport
    - Fixed animation timeline node selection scrolling and keyframe selection

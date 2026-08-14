@@ -117,7 +117,8 @@ Some of these settings are only for voxel format, others are only for the mesh f
 | `voxformat_gmlfilenamefilter` | Only import some of the filenames of a gml file. Wildcards are supported.                | `*5[123]*`   |
 | `voxformat_imageheightmapminheight`                  | The minimum height of the heightmap when importing an image as heightmap           | 0            |
 | `voxformat_imageimporttype`                          | 0 = plane, 1 = heightmap, 2 = volume                                               | 0            |
-| `voxformat_imagesavetype`                            | 0 = plane, 1 = heightmap, 3 = thumbnail                                            | 0            |
+| `voxformat_imagesavetype`                            | 0 = plane (Y slices, XZ images), 1 = heightmap, 3 = thumbnail                      | 0            |
+| `voxformat_imageslicehollowinterior`                 | PNG slice export: buried exact-white fill is transparent except a 1-voxel liner next to non-white solids | true/false   |
 | `voxformat_imagesliceoffsetaxis`                     | The axis to offset the slices when importing images as volumes or heightmaps       | x/y/z        |
 | `voxformat_imagesliceoffset`                         | The offset of the slices when importing images as volumes or heightmaps            | 0            |
 | `voxformat_imagevolumemaxdepth`                      | The maximum depth of the volume when importing an image as volume                  | 1            |
@@ -149,14 +150,14 @@ Some of these settings are only for voxel format, others are only for the mesh f
 | `voxformat_skinaddgroups`     | Add groups for body parts of Minecraft skins                                             | true/false   |
 | `voxformat_skinapplytransform`| Apply transforms to Minecraft skins                                                      | true/false   |
 | `voxformat_skinmergefaces`    | Merge faces of Minecraft skins into a single volume                                      | true/false   |
-| `voxformat_targetcolors`      | Target number of colors after voxelization (0 = no limit)                                | 0            |
+| `voxformat_targetcolors`      | Target number of colors after mesh voxelization (0 = 256, hue ramps)                     | 0            |
 | `voxformat_texturepath`       | Additional search path for textures when importing mesh formats                          |              |
 | `voxformat_transform_mesh`    | Apply the keyframe transform to the mesh                                                 | true/false   |
 | `voxformat_mvapplytransform`  | Bake MagicaVoxel nTRN transforms into voxels on load (default on; disable for shared model references) | true/false   |
 | `voxformat_voxanimasnodes`    | Import/export MagicaVoxel model_anim frames as dedicated volume nodes under a group      | true/false   |
 | `voxformat_voxcreategroups`   | Emit MagicaVoxel nGRP groups on save (load always preserves groups)                      | true/false   |
 | `voxformat_voxcreatelayers`   | Emit MagicaVoxel LAYR layers on save (instances share models via references on load)     | true/false   |
-| `voxformat_voxelizemode`      | `0` = high quality, `1` = faster and less memory                                         | 0/1          |
+| `voxformat_voxelizemode`      | `0` = high quality (triangle subdivide), `1` = faster rasterizer, `2` = solid (inside + nearest-surface UV color). Textured meshes use solid when mode is `0`. | 0/1/2        |
 | `voxformat_voxelize_chunked`  | Enable chunked voxelization for large meshes                                             | true/false   |
 | `voxformat_voxelize_chunksize`| Chunk size for chunked voxelization (clamped to 16-512)                                  | 128          |
 | `voxformat_voxelsize`         | The number of voxels on the largest axis (0 = disabled, use scale cvars instead). Single mesh exports only. | 0            |

@@ -45,6 +45,12 @@ public:
 	 * this case.
 	 */
 	[[nodiscard]] bool calcUVs(const glm::vec3 &pos, glm::vec2 &uv) const;
+
+	/**
+	 * @brief Closest point on this triangle to @p pos and the UV interpolated at that point.
+	 * Unlike calcUVs() this is valid for points that miss the triangle (clamped barycentric).
+	 */
+	void closestPoint(const glm::vec3 &pos, glm::vec3 &outPos, glm::vec2 &outUV) const;
 };
 // static_assert(sizeof(MeshTri) == 76, "Unexpected size for MeshTri - try to keep this small");
 
@@ -82,7 +88,8 @@ inline void subdivide(const MESHTRI &in, MESHTRI out[4]) {
 		MESHTRI{{midv[0], midv[1], midv[2]}, {miduv[0], miduv[1], miduv[2]}, in.materialIdx, {midc[0], midc[1], midc[2]}};
 }
 
-inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMaterialArray, const glm::vec2 &uv, bool originUpperLeft = false) {
+inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMaterialArray, const glm::vec2 &uv,
+						   bool originUpperLeft = false, bool bilinear = false, bool maxChroma = false) {
 	MeshMaterial* material;
 	if (tri.materialIdx >= 0 && tri.materialIdx < (int)meshMaterialArray.size()) {
 		material = meshMaterialArray[tri.materialIdx].get();
@@ -90,7 +97,8 @@ inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMate
 		material = nullptr;
 	}
 	color::RGBA rgba;
-	if (material && material->colorAt(rgba, uv, originUpperLeft)) {
+	const bool upperLeft = originUpperLeft || (material && material->uvOriginUpperLeft);
+	if (material && material->colorAt(rgba, uv, upperLeft, bilinear, maxChroma)) {
 		return rgba;
 	}
 

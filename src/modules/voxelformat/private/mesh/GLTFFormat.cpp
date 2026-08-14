@@ -35,7 +35,11 @@
 #include "voxelformat/private/mesh/MeshMaterial.h"
 #include "voxelformat/private/mesh/TextureLookup.h"
 #include <float.h>
+#include <glm/gtc/epsilon.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/mat3x3.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/vec4.hpp>
 
 #define CGLTF_MALLOC(size) core_malloc(size)
 #define CGLTF_FREE(ptr) core_free(ptr)
@@ -174,6 +178,94 @@ static cgltf_interpolation_type sceneGraphInterpolationToGltf(const scenegraph::
 	return cgltf_interpolation_type_step;
 }
 
+static image::TextureWrap cgltfWrapToTextureWrap(cgltf_wrap_mode mode) {
+	if (mode == cgltf_wrap_mode_clamp_to_edge) {
+		return image::TextureWrap::ClampToEdge;
+	}
+	if (mode == cgltf_wrap_mode_mirrored_repeat) {
+		return image::TextureWrap::MirroredRepeat;
+	}
+	return image::TextureWrap::Repeat;
+}
+
+static image::ImageType detectGltfImageType(const uint8_t *data, size_t size, const char *mimeType) {
+	if (size >= 4) {
+		if (data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G') {
+			return image::ImageType::PNG;
+		}
+		if (data[0] == 0xFF && data[1] == 0xD8) {
+			return image::ImageType::JPEG;
+		}
+	}
+	if (mimeType != nullptr) {
+		if (core::string::contains(mimeType, "jpeg") || core::string::contains(mimeType, "jpg")) {
+			return image::ImageType::JPEG;
+		}
+		if (core::string::contains(mimeType, "png")) {
+			return image::ImageType::PNG;
+		}
+	}
+	return image::ImageType::Unknown;
+}
+
+static image::ImagePtr loadGltfImageBuffer(const core::String &name, const uint8_t *bufData, size_t bufSize,
+										   const char *mimeType) {
+	image::ImagePtr tex = image::createEmptyImage(name);
+	if (!bufData || bufSize == 0) {
+		return tex;
+	}
+	io::MemoryReadStream stream(bufData, (int)bufSize);
+	image::ImageType imgType = detectGltfImageType(bufData, bufSize, mimeType);
+	if (imgType != image::ImageType::Unknown && tex->load(imgType, stream, (int)bufSize)) {
+		return tex;
+	}
+	stream.seek(0);
+	if (tex->load(image::ImageType::PNG, stream, (int)bufSize)) {
+		return tex;
+	}
+	stream.seek(0);
+	if (tex->load(image::ImageType::JPEG, stream, (int)bufSize)) {
+		return tex;
+	}
+	stream.seek(0);
+	// stb path (webp, bmp, unlabeled)
+	if (tex->load(image::ImageType::BMP, stream, (int)bufSize)) {
+		return tex;
+	}
+	Log::warn("Failed to load embedded glTF image %s (%i bytes, mime %s)", name.c_str(), (int)bufSize,
+			  mimeType ? mimeType : "none");
+	return tex;
+}
+
+static void applyWorldScaleToMesh(const cgltf_node *node, Mesh &mesh) {
+	cgltf_float world[16];
+	cgltf_node_transform_world(node, world);
+	const glm::vec3 scale(glm::length(glm::vec3(world[0], world[1], world[2])),
+						  glm::length(glm::vec3(world[4], world[5], world[6])),
+						  glm::length(glm::vec3(world[8], world[9], world[10])));
+	if (glm::all(glm::epsilonEqual(scale, glm::vec3(1.0f), 0.0001f))) {
+		return;
+	}
+	Log::debug("Baking glTF world scale %f:%f:%f into mesh vertices", scale.x, scale.y, scale.z);
+	for (MeshVertex &v : mesh.vertices) {
+		v.pos.x *= scale.x;
+		v.pos.y *= scale.y;
+		v.pos.z *= scale.z;
+	}
+}
+
+static void applyWorldTransformToMesh(const cgltf_node *node, Mesh &mesh) {
+	cgltf_float world[16];
+	cgltf_node_transform_world(node, world);
+	const glm::mat4 m = glm::make_mat4(world);
+	for (MeshVertex &v : mesh.vertices) {
+		v.pos = glm::vec3(m * glm::vec4(v.pos, 1.0f));
+		if (glm::dot(v.normal, v.normal) > 0.0f) {
+			v.normal = glm::normalize(glm::mat3(m) * v.normal);
+		}
+	}
+}
+
 MeshMaterialPtr GLTFFormat::loadMaterial(const cgltf_data *data, const cgltf_material *mat,
 										 const core::String &filename, const io::ArchivePtr &archive) const {
 	core::String name = mat->name ? mat->name : "default";
@@ -184,23 +276,30 @@ MeshMaterialPtr GLTFFormat::loadMaterial(const cgltf_data *data, const cgltf_mat
 		const cgltf_pbr_metallic_roughness &pbr = mat->pbr_metallic_roughness;
 		palMat.setValue(palette::MaterialProperty::MaterialMetal, pbr.metallic_factor);
 		palMat.setValue(palette::MaterialProperty::MaterialRoughness, pbr.roughness_factor);
-		meshMat->baseColor =
-			color::RGBA((uint8_t)(pbr.base_color_factor[0] * 255.0f), (uint8_t)(pbr.base_color_factor[1] * 255.0f),
-						(uint8_t)(pbr.base_color_factor[2] * 255.0f), (uint8_t)(pbr.base_color_factor[3] * 255.0f));
+		meshMat->colorFactor = glm::vec4(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2],
+										 pbr.base_color_factor[3]);
+		meshMat->multiplyColorFactor = true;
+		meshMat->uvOriginUpperLeft = true;
+		meshMat->baseColor = color::linearToSrgb(meshMat->colorFactor);
+		meshMat->baseColorFactor = 1.0f;
+		if (pbr.base_color_texture.texture) {
+			const cgltf_texture *texInfo = pbr.base_color_texture.texture;
+			if (texInfo->sampler) {
+				meshMat->wrapS = cgltfWrapToTextureWrap(texInfo->sampler->wrap_s);
+				meshMat->wrapT = cgltfWrapToTextureWrap(texInfo->sampler->wrap_t);
+			}
+			meshMat->uvIndex = (int16_t)pbr.base_color_texture.texcoord;
+		}
 
 		if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
 			const cgltf_image *img = pbr.base_color_texture.texture->image;
 			if (img->buffer_view) {
 				const uint8_t *bufData = (const uint8_t *)cgltf_buffer_view_data(img->buffer_view);
 				if (bufData) {
-					image::ImagePtr tex = image::createEmptyImage(name);
-					io::MemoryReadStream stream(bufData, img->buffer_view->size);
-					const char *mimeType = img->mime_type ? img->mime_type : "";
-					image::ImageType imgType = image::ImageType::PNG;
-					if (core::string::contains(mimeType, "jpeg") || core::string::contains(mimeType, "jpg")) {
-						imgType = image::ImageType::JPEG;
-					}
-					if (tex->load(imgType, stream, (int)img->buffer_view->size)) {
+					const core::String imgName = img->name ? img->name : name;
+					image::ImagePtr tex =
+						loadGltfImageBuffer(imgName, bufData, img->buffer_view->size, img->mime_type);
+					if (tex->isLoaded()) {
 						meshMat->texture = tex;
 					}
 				}
@@ -333,7 +432,14 @@ int GLTFFormat::addNode_r(const cgltf_data *data, const cgltf_node *node, const 
 				continue;
 			}
 			const cgltf_accessor *normalAccessor = cgltf_find_accessor(&prim, cgltf_attribute_type_normal, 0);
-			const cgltf_accessor *uvAccessor = cgltf_find_accessor(&prim, cgltf_attribute_type_texcoord, 0);
+			int uvSet = 0;
+			if (prim.material && prim.material->has_pbr_metallic_roughness) {
+				uvSet = (int)prim.material->pbr_metallic_roughness.base_color_texture.texcoord;
+			}
+			const cgltf_accessor *uvAccessor = cgltf_find_accessor(&prim, cgltf_attribute_type_texcoord, uvSet);
+			if (!uvAccessor && uvSet != 0) {
+				uvAccessor = cgltf_find_accessor(&prim, cgltf_attribute_type_texcoord, 0);
+			}
 			const cgltf_accessor *colAccessor = cgltf_find_accessor(&prim, cgltf_attribute_type_color, 0);
 
 			MeshMaterialPtr mat = createMaterial("default");
@@ -360,10 +466,19 @@ int GLTFFormat::addNode_r(const cgltf_data *data, const cgltf_node *node, const 
 				}
 			}
 
-			core::Map<cgltf_size, voxel::IndexType> remap((int)srcIndices.size());
+			// Dense remap: core::Map defaults to 11 buckets and is unusable for
+			// Hunyuan-sized meshes (~1e6 verts, ~4e6 indices).
+			const cgltf_size vertCount = posAccessor->count;
+			core::Buffer<uint32_t> remap((size_t)vertCount, 0xFF);
+			const uint32_t unset = 0xFFFFFFFFu;
+			mesh.vertices.reserve(mesh.vertices.size() + (int)vertCount);
+			mesh.indices.reserve(mesh.indices.size() + (int)srcIndices.size());
 			for (cgltf_size srcIdx : srcIndices) {
-				voxel::IndexType dstIdx = 0;
-				if (!remap.get(srcIdx, dstIdx)) {
+				if (srcIdx >= vertCount) {
+					continue;
+				}
+				uint32_t dstIdx = remap[srcIdx];
+				if (dstIdx == unset) {
 					MeshVertex v;
 					float pos[3] = {0};
 					if (!cgltf_accessor_read_float(posAccessor, srcIdx, pos, 3)) {
@@ -390,11 +505,11 @@ int GLTFFormat::addNode_r(const cgltf_data *data, const cgltf_node *node, const 
 						v.color = mat->baseColor;
 					}
 					v.materialIdx = materialIndex;
-					dstIdx = (voxel::IndexType)mesh.vertices.size();
+					dstIdx = (uint32_t)mesh.vertices.size();
 					mesh.vertices.push_back(v);
-					remap.put(srcIdx, dstIdx);
+					remap[srcIdx] = dstIdx;
 				}
-				mesh.indices.push_back(dstIdx);
+				mesh.indices.push_back((voxel::IndexType)dstIdx);
 			}
 		}
 
@@ -406,9 +521,22 @@ int GLTFFormat::addNode_r(const cgltf_data *data, const cgltf_node *node, const 
 			if (meshName.empty()) {
 				meshName = "mesh";
 			}
-			nodeId = voxelizeMesh(meshName, sceneGraph, core::move(mesh), parent, false);
+			// Bake scale so voxel size is in world units. Full world bake when the
+			// file has no animations (static MagicaVoxel-style import).
+			if (data->animations_count == 0) {
+				applyWorldTransformToMesh(node, mesh);
+			} else {
+				applyWorldScaleToMesh(node, mesh);
+			}
+			const bool resetOrigin = data->animations_count == 0;
+			nodeId = voxelizeMesh(meshName, sceneGraph, core::move(mesh), parent, resetOrigin);
 			if (nodeId != InvalidNodeId && sceneGraph.hasNode(nodeId)) {
-				applyCgltfNodeTransform(node, sceneGraph.node(nodeId));
+				if (data->animations_count != 0) {
+					applyCgltfNodeTransform(node, sceneGraph.node(nodeId));
+					scenegraph::SceneGraphTransform t = sceneGraph.node(nodeId).transform(0);
+					t.setLocalScale(glm::vec3(1.0f));
+					sceneGraph.node(nodeId).setTransform(0, t);
+				}
 			} else {
 				nodeId = parent;
 			}

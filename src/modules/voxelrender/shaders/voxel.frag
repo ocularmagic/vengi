@@ -9,16 +9,14 @@ flat $in uint v_flags;
 #include "_tonemapping.glsl"
 
 vec4 calcColor(void) {
-	vec3 normal;
-	if ((v_flags & FLAGHASNORMALPALETTECOLOR) != 0u) {
-		normal = v_normal;
-	} else {
-		vec3 fdx = dFdx(v_pos);
-		vec3 fdy = dFdy(v_pos);
-		// http://www.aclockworkberry.com/shader-derivative-functions/
-		// face normal (flat shading)
-		normal = normalize(cross(fdx, fdy));
-	}
+	// Cubic voxels always light from the visible cube face. Stored mesh
+	// triangle normals (FLAGHASNORMALPALETTECOLOR) are for show-normals
+	// visualization and C&C export, not Lambert lighting -- otherwise a
+	// whole cube is shaded as a slanted plane and looks dark/grey.
+	vec3 fdx = dFdx(v_pos);
+	vec3 fdy = dFdy(v_pos);
+	// http://www.aclockworkberry.com/shader-derivative-functions/
+	vec3 normal = normalize(cross(fdx, fdy));
 	float ndotl1 = dot(normal, u_lightdir);
 	float ndotl2 = dot(normal, -u_lightdir);
 	bool usePrimaryLight = ndotl1 >= ndotl2;

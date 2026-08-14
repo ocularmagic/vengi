@@ -34,7 +34,9 @@ Sometimes it's also just the case-sensitivity of your filesystem. This is true f
 
 ## My model is very small/big after voxelization
 
-Vengi uses 1 unit in your mesh for one voxel. So if your model is scaled down or up to fit the needs for your own workflow, you can scale the model up with the [cvar](Configuration.md) `voxformat_scale`. If your model is only shown very small/big in [vengi-voxedit](voxedit/Index.md) scene mode, this means that the node got a scaling applied. Switch to the node inspector and reset the scale value for the node. This is not related to the previously mentioned cvar - the cvar scales the geometry - not the transformation matrices in the scene.
+Vengi uses 1 unit in your mesh for one voxel. So if your model is scaled down or up to fit the needs for your own workflow, you can scale the model up with the [cvar](Configuration.md) `voxformat_scale`. To fit the longest axis into a given voxel count, set `voxformat_voxelsize` instead (for example `128`). If your model is only shown very small/big in [vengi-voxedit](voxedit/Index.md) scene mode, this means that the node got a scaling applied. Switch to the node inspector and reset the scale value for the node. This is not related to the previously mentioned cvar - the cvar scales the geometry - not the transformation matrices in the scene.
+
+VoxEdit does not have MagicaVoxel's 256-voxel-per-axis limit. Very large grids still use more memory and take longer; you will get a warning above 512 on an axis. Palettes are still 256 colors.
 
 ## Some parts of a model are not available after vengi saved them
 
