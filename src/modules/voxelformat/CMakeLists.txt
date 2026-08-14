@@ -112,6 +112,7 @@ set(SRCS
 	private/mesh/LZUTF8.h                    private/mesh/LZUTF8.cpp
 	private/mesh/GodotSceneFormat.h          private/mesh/GodotSceneFormat.cpp
 	private/mesh/MeshFormat.h                private/mesh/MeshFormat.cpp
+	private/mesh/MeshVoxelizeSolid.cpp
 	private/mesh/MeshMaterial.h              private/mesh/MeshMaterial.cpp
 	private/mesh/OBJFormat.h                 private/mesh/OBJFormat.cpp
 	private/mesh/PLYFormat.h                 private/mesh/PLYFormat.cpp

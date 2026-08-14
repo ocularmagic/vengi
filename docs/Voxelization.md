@@ -2,6 +2,26 @@
 
 When converting mesh [formats](Formats.md) (OBJ, FBX, glTF, STL, PLY, etc.) to voxel formats, Vengi uses different voxelization algorithms to convert continuous triangle meshes into discrete voxel grids. The algorithm can be selected using the `voxformat_voxelizemode` configuration variable.
 
+Textured meshes (glTF/GLB with a `baseColor` image, and other formats that loaded a texture) use **Solid** mode when `voxformat_voxelizemode` is left at `0`. Set the mode to `1` to force the old fast rasterizer.
+
+## Solid Mode (textured mesh default)
+
+**Mode:** `voxformat_voxelizemode=2` (also used automatically for textured imports when mode is `0`)
+
+Occupancy and color are two separate passes.
+
+1. **Occupancy:** mark voxels whose cell intersects the mesh. If `voxformat_fillhollow` is on, flood from the outside and keep the enclosed interior. This is a filled solid, not a shell painted with one fill color.
+2. **Color:** every **surface** voxel uses the closest point on the original mesh from the voxel center, interpolates that triangle's UVs, and reads the albedo from a 2x2 neighborhood by picking the **highest-chroma** texel (not an average). That keeps painted colors and drops baked-shadow / AA fringe. glTF/GLB textures use the spec UV origin (upper-left).
+3. **Palette:** only surface samples vote. Colors are grouped by hue (plus neutrals). Each group gets slots in proportion to how much of the surface it covers, then a gap-split median cut builds a **ramp** for that group. Voxels are remapped with HSB distance so a dusty sample snaps to its hue ramp instead of a nearby brown. Default target is 256 (`voxformat_targetcolors` `0`). Interior voxels are solid white and do not enter the histogram. Palette bytes are sRGB. glTF `baseColorFactor` is applied in linear space (skipped when the factor is 1) and encoded with the sRGB OETF so midtones are not crushed.
+
+Cubic voxels do **not** store the source triangle normal. The edit viewport lights each cube from its visible face (same as MagicaVoxel `.vox`). Triangle normals on a cube shade the whole voxel as a slanted plane and look dark/grey. A normal palette is still attached to the node so you can calculate or paint normals later (Command & Conquer). Use **Show normals** to visualize stored normals; they are not used for cube lighting.
+
+PNG slice export (`voxformat_imagesavetype` `0`) writes one XZ image per height (Y), top of the model first. Buried exact-white fill becomes transparent except a 1-voxel liner next to the colored shell. Disable the liner/hollow with `voxformat_imageslicehollowinterior false`.
+
+Do not expect triangle-overlap averaging, largest-face heuristics, or `centerUV` fallbacks in this mode.
+
+Size is unchanged from the rest of Vengi: `voxformat_voxelsize` (voxels on the longest axis) or `voxformat_scale`. VoxEdit does not have MagicaVoxel's 256-voxel-per-axis limit.
+
 ## High Quality Mode (Default)
 
 **Mode:** `voxformat_voxelizemode=0`
@@ -62,7 +82,7 @@ A faster voxelization algorithm optimized for speed and memory efficiency. This 
 
 1. **Direct Voxelization:** Each triangle is directly rasterized into the voxel grid without subdivision.
 
-2. **Per-Triangle Processing:** Colors and normals are sampled directly from the triangle's UV coordinates and interpolated normals.
+2. **Per-Triangle Processing:** Colors are sampled directly from the triangle's UV coordinates. Cube voxels do not store interpolated triangle normals.
 
 3. **Memory Efficient:** Doesn't create temporary subdivision data, keeping memory usage lower.
 
@@ -70,7 +90,7 @@ A faster voxelization algorithm optimized for speed and memory efficiency. This 
 
 - Good results for small to medium triangles
 - May have gaps or holes with very large triangles
-- Faster color and normal sampling
+- Faster color sampling
 - Less accurate for meshes with large triangular faces
 - May miss thin surfaces if triangles are too large
 
@@ -159,14 +179,14 @@ Quick selection guide:
 
 | Scenario | Recommended Mode | Reason |
 |----------|------------------|--------|
-| Detailed character models | High Quality | Preserves fine features and thin surfaces |
+| Textured glTF / GLB / OBJ | Solid (default for textures) | Nearest-surface UV, filled interiors |
+| Detailed untextured models | High Quality | Preserves fine features and thin surfaces |
 | Large terrain meshes | Fast | Better memory usage and performance |
-| Architectural models | High Quality | Accurate wall and surface representation |
+| Architectural models | Solid or High Quality | Solid if textured; otherwise subdivision |
 | Preview/draft work | Fast | Quick turnaround time |
-| Mesh with large triangles | High Quality | Subdivision ensures proper coverage |
+| Mesh with large triangles | High Quality or Solid | Subdivision or occupancy, not the fast UV fallback |
 | Batch processing | Fast | Faster overall processing time |
-| Dimensions < 256³ | High Quality | Best quality with reasonable performance |
-| Dimensions > 512³ | Fast | Necessary for memory constraints |
+| Dimensions > 512³ | Fast or chunked | Necessary for memory constraints |
 
 ## Troubleshooting
 

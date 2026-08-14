@@ -44,7 +44,7 @@ bool FormatConfig::init() {
 	core::registerVar(voxformatRGBFlattenFactor);
 	const core::VarDef voxformatTargetColors(
 		cfg::VoxformatTargetColors, 0, 0, 256, N_("Target"),
-		N_("Target number of colors after voxelization (0 = no limit, otherwise quantize to this amount)"),
+		N_("Target number of colors after voxelization (0 = 256 for mesh import, otherwise quantize to this amount)"),
 		core::CV_NOPERSIST);
 	core::registerVar(voxformatTargetColors);
 	const core::VarDef voxformatSaveVisibleOnly(cfg::VoxformatSaveVisibleOnly, false, N_("Save visible only"),
@@ -93,9 +93,11 @@ bool FormatConfig::init() {
 	const core::VarDef voxformatFillHollow(cfg::VoxformatFillHollow, true, N_("Fill hollow"),
 										   N_("Fill the hollows when voxelizing a mesh format"), core::CV_NOPERSIST);
 	core::registerVar(voxformatFillHollow);
-	const core::VarDef voxformatVoxelizeMode(cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::HighQuality, 0, 1,
-											 N_("Voxelize mode"), N_("0 = high quality, 1 = faster and less memory"),
-											 core::CV_NOPERSIST);
+	const core::VarDef voxformatVoxelizeMode(
+		cfg::VoxformatVoxelizeMode, MeshFormat::VoxelizeMode::HighQuality, 0, 2, N_("Voxelize mode"),
+		N_("0 = high quality (triangle subdivide), 1 = faster rasterizer, 2 = solid (inside + nearest-surface color). "
+		   "Textured mesh import uses solid when mode is 0."),
+		core::CV_NOPERSIST);
 	core::registerVar(voxformatVoxelizeMode);
 	const core::VarDef voxformatVoxelizeChunked(cfg::VoxformatVoxelizeChunked, false, N_("Chunked voxelization"),
 												N_("Enable chunked voxelization for large meshes"), core::CV_NOPERSIST);
@@ -214,6 +216,11 @@ bool FormatConfig::init() {
 		PNGFormat::ImageType::Volume, N_("Image save type"),
 		NC_("Image save type", "0 = plane, 1 = heightmap, 2 = volume, 3 = thumbnail"), core::CV_NOPERSIST);
 	core::registerVar(voxformatImageSaveType);
+	const core::VarDef voxformatImageSliceHollowInterior(
+		cfg::VoxformatImageSliceHollowInterior, true, N_("Hollow interior on slices"),
+		N_("On PNG slice export, buried exact-white fill becomes transparent except a 1-voxel liner next to non-white solids"),
+		core::CV_NOPERSIST);
+	core::registerVar(voxformatImageSliceHollowInterior);
 	const core::VarDef voxformatImageSliceOffsetAxis(
 		cfg::VoxformatImageSliceOffsetAxis, "y", {"x", "y", "z"}, N_("Slice offset axis"),
 		N_("The axis to offset the slices when importing images as volumes or heightmaps"), core::CV_NOPERSIST);

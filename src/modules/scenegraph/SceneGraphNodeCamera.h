@@ -22,7 +22,8 @@ public:
 	static constexpr const char *Modes[] = {"orthographic", "perspective"};
 
 	static bool isFloatProperty(const core::String &key) {
-		return key == PropCamNearPlane || key == PropCamFarPlane || key == PropCamAspect;
+		return key == PropCamNearPlane || key == PropCamFarPlane || key == PropCamAspect ||
+			   key == PropCamTargetDistance;
 	}
 
 	static bool isIntProperty(const core::String &key) {
@@ -57,6 +58,19 @@ public:
 
 	bool isPerspective() const;
 	void setPerspective();
+
+	/**
+	 * @brief Orbit (target) vs first-person (eye) movement.
+	 * Missing property defaults to target, matching the editor viewport.
+	 */
+	bool isTargetRotation() const;
+	void setTargetRotation(bool target);
+
+	void setTarget(const glm::vec3 &target);
+	glm::vec3 target() const;
+
+	void setTargetDistance(float distance);
+	float targetDistance() const;
 };
 static_assert(sizeof(SceneGraphNodeCamera) == sizeof(SceneGraphNode), "Sizes must match - direct casting is performed");
 

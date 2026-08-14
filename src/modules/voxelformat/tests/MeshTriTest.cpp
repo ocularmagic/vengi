@@ -50,4 +50,65 @@ TEST_F(MeshTriTest, testColorAt4x4) {
 	}
 }
 
+TEST_F(MeshTriTest, testColorAtBilinearMidpoint) {
+	const color::RGBA red(255, 0, 0, 255);
+	const color::RGBA blue(0, 0, 255, 255);
+	const color::RGBA pixels[2] = {red, blue};
+	const image::ImagePtr &texture = image::createEmptyImage("2x1");
+	texture->loadRGBA((const uint8_t *)pixels, 2, 1);
+	MeshMaterialArray meshMaterialArray;
+	meshMaterialArray.emplace_back(createMaterial(texture));
+	meshMaterialArray[0]->uvOriginUpperLeft = true;
+	voxelformat::MeshTri meshTri;
+	meshTri.materialIdx = 0;
+	meshTri.setUVs(glm::vec2(0.5f, 0.5f), glm::vec2(0.5f, 0.5f), glm::vec2(0.5f, 0.5f));
+	const color::RGBA mid = colorAt(meshTri, meshMaterialArray, meshTri.centerUV(), true, true);
+	EXPECT_NEAR(127.0f, (float)mid.r, 8.0f);
+	EXPECT_NEAR(127.0f, (float)mid.b, 8.0f);
+}
+
+TEST_F(MeshTriTest, testColorAtIdentityColorFactorKeepsTexel) {
+	constexpr color::RGBA texel(180, 210, 230, 255);
+	const image::ImagePtr &texture = image::createEmptyImage("1x1");
+	texture->loadRGBA((const uint8_t *)&texel, 1, 1);
+	MeshMaterialArray meshMaterialArray;
+	meshMaterialArray.emplace_back(createMaterial(texture));
+	meshMaterialArray[0]->multiplyColorFactor = true;
+	meshMaterialArray[0]->colorFactor = glm::vec4(1.0f);
+	meshMaterialArray[0]->uvOriginUpperLeft = true;
+	voxelformat::MeshTri meshTri;
+	meshTri.materialIdx = 0;
+	meshTri.setUVs(glm::vec2(0.5f, 0.5f), glm::vec2(0.5f, 0.5f), glm::vec2(0.5f, 0.5f));
+	EXPECT_EQ(texel, colorAt(meshTri, meshMaterialArray, meshTri.centerUV()));
+}
+
+TEST_F(MeshTriTest, testClosestPointUv) {
+	voxelformat::MeshTri meshTri;
+	meshTri.setVertices(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(2.0f, 0.0f, 0.0f), glm::vec3(0.0f, 2.0f, 0.0f));
+	meshTri.setUVs(glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 0.0f), glm::vec2(0.0f, 1.0f));
+
+	glm::vec3 closest;
+	glm::vec2 uv;
+	meshTri.closestPoint(glm::vec3(0.0f, 0.0f, 0.0f), closest, uv);
+	EXPECT_NEAR(0.0f, closest.x, 0.0001f);
+	EXPECT_NEAR(0.0f, closest.y, 0.0001f);
+	EXPECT_NEAR(0.0f, closest.z, 0.0001f);
+	EXPECT_NEAR(0.0f, uv.x, 0.0001f);
+	EXPECT_NEAR(0.0f, uv.y, 0.0001f);
+
+	meshTri.closestPoint(glm::vec3(0.5f, 0.5f, 0.0f), closest, uv);
+	EXPECT_NEAR(0.5f, closest.x, 0.0001f);
+	EXPECT_NEAR(0.5f, closest.y, 0.0001f);
+	EXPECT_NEAR(0.0f, closest.z, 0.0001f);
+	EXPECT_NEAR(0.25f, uv.x, 0.0001f);
+	EXPECT_NEAR(0.25f, uv.y, 0.0001f);
+
+	// Off the triangle: clamp onto the AB edge, do not use the centroid UV.
+	meshTri.closestPoint(glm::vec3(1.0f, -1.0f, 0.0f), closest, uv);
+	EXPECT_NEAR(0.0f, closest.y, 0.0001f);
+	EXPECT_NEAR(0.0f, uv.y, 0.0001f);
+	EXPECT_GT(uv.x, 0.0f);
+	EXPECT_LT(uv.x, 1.0f);
+}
+
 } // namespace voxelformat

@@ -148,8 +148,9 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 		if (_pathTracer.started()) {
 			if (ImGui::IconMenuItem(ICON_LC_REFRESH_CW, _("Sync camera"))) {
 				_pathTracer.restart(sceneGraph, _sceneMgr->activeCamera());
+				_pathTracer.state().params.camera = 0;
 			}
-			ImGui::TooltipTextUnformatted(_("Restart with the current viewport camera"));
+			ImGui::TooltipTextUnformatted(_("Restart from the last focused viewport (what you were looking at)"));
 			if (ImGui::IconMenuItem(ICON_LC_CIRCLE_STOP, _("Stop path tracer"))) {
 				_pathTracer.stop();
 			}
@@ -164,7 +165,13 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 		} else {
 			if (ImGui::IconMenuItem(ICON_LC_PLAY, _("Start path tracer"))) {
 				_pathTracer.start(sceneGraph, _sceneMgr->activeCamera());
+				// Always begin from the live viewport camera. Scene camera
+				// nodes and the Yocto fallback stay available in Settings.
+				if (_sceneMgr->activeCamera() != nullptr) {
+					_pathTracer.state().params.camera = 0;
+				}
 			}
+			ImGui::TooltipTextUnformatted(_("Trace the last focused viewport camera"));
 		}
 		ImGui::EndMenuBar();
 	}
@@ -184,7 +191,15 @@ void RenderPanel::update(const char *id, const scenegraph::SceneGraph &sceneGrap
 	renderMenuBar(sceneGraph);
 	// TODO: allow to change the current scene camera like in the scene view in the Viewport class
 	if (_texture->isLoaded()) {
-		ImGui::Image(_texture->handle(), ImVec2((float)_texture->width(), (float)_texture->height()));
+		const ImVec2 avail = ImGui::GetContentRegionAvail();
+		const float texW = (float)_texture->width();
+		const float texH = (float)_texture->height();
+		if (texW > 0.0f && texH > 0.0f && avail.x > 0.0f && avail.y > 0.0f) {
+			const float scaleX = avail.x / texW;
+			const float scaleY = avail.y / texH;
+			const float scale = scaleX < scaleY ? scaleX : scaleY;
+			ImGui::Image(_texture->handle(), ImVec2(texW * scale, texH * scale));
+		}
 	}
 #else
 	(void)id;

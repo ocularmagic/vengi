@@ -3,6 +3,7 @@
  */
 
 #include "MeshTri.h"
+#include <glm/common.hpp>
 #include <glm/ext/scalar_common.hpp>
 #include <glm/ext/scalar_constants.hpp>
 #include <glm/geometric.hpp>
@@ -72,6 +73,72 @@ bool MeshTri::calcUVs(const glm::vec3 &pos, glm::vec2 &outUV) const {
 	}
 
 	return false;
+}
+
+void MeshTri::closestPoint(const glm::vec3 &pos, glm::vec3 &outPos, glm::vec2 &outUV) const {
+	const glm::vec3 &a = vertex0();
+	const glm::vec3 &b = vertex1();
+	const glm::vec3 &c = vertex2();
+	const glm::vec3 ab = b - a;
+	const glm::vec3 ac = c - a;
+	const glm::vec3 ap = pos - a;
+
+	const float d1 = glm::dot(ab, ap);
+	const float d2 = glm::dot(ac, ap);
+	if (d1 <= 0.0f && d2 <= 0.0f) {
+		outPos = a;
+		outUV = uv0();
+		return;
+	}
+
+	const glm::vec3 bp = pos - b;
+	const float d3 = glm::dot(ab, bp);
+	const float d4 = glm::dot(ac, bp);
+	if (d3 >= 0.0f && d4 <= d3) {
+		outPos = b;
+		outUV = uv1();
+		return;
+	}
+
+	const float vc = d1 * d4 - d3 * d2;
+	if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+		const float v = d1 / (d1 - d3);
+		outPos = a + v * ab;
+		outUV = glm::mix(uv0(), uv1(), v);
+		return;
+	}
+
+	const glm::vec3 cp = pos - c;
+	const float d5 = glm::dot(ab, cp);
+	const float d6 = glm::dot(ac, cp);
+	if (d6 >= 0.0f && d5 <= d6) {
+		outPos = c;
+		outUV = uv2();
+		return;
+	}
+
+	const float vb = d5 * d2 - d1 * d6;
+	if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+		const float w = d2 / (d2 - d6);
+		outPos = a + w * ac;
+		outUV = glm::mix(uv0(), uv2(), w);
+		return;
+	}
+
+	const float va = d3 * d6 - d5 * d4;
+	if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+		const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+		outPos = b + w * (c - b);
+		outUV = glm::mix(uv1(), uv2(), w);
+		return;
+	}
+
+	const float denom = 1.0f / (va + vb + vc);
+	const float v = vb * denom;
+	const float w = vc * denom;
+	const float u = 1.0f - v - w;
+	outPos = a + ab * v + ac * w;
+	outUV = u * uv0() + v * uv1() + w * uv2();
 }
 
 } // namespace voxelformat

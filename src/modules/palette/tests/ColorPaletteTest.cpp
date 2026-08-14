@@ -4,6 +4,7 @@
 
 #include "palette/ColorPalette.h"
 #include "app/tests/AbstractTest.h"
+#include "core/collection/Buffer.h"
 #include "image/Image.h"
 #include "palette/FormatConfig.h"
 #include "palette/Palette.h"
@@ -144,6 +145,191 @@ TEST_F(ColorPaletteTest, testQuantizeTargetColors) {
 	};
 	pal.quantize(colors, lengthof(colors), 5);
 	EXPECT_EQ(5, pal.colorCount());
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteKeepsDominantColor) {
+	// Many samples of one material, a handful of another, and unique noise.
+	// Frequency+range split must keep the dominant color.
+	core::Buffer<color::RGBA> samples;
+	for (int i = 0; i < 400; ++i) {
+		samples.push_back(color::RGBA(150, 195, 225, 255));
+	}
+	for (int i = 0; i < 8; ++i) {
+		samples.push_back(color::RGBA(230, 160 + i, 130 + i, 255));
+	}
+	for (int i = 0; i < 20; ++i) {
+		samples.push_back(color::RGBA((uint8_t)(i * 3), (uint8_t)(i * 5), (uint8_t)(i * 7), 255));
+	}
+
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 32);
+	ASSERT_GT(pal.colorCount(), 0);
+	ASSERT_LE(pal.colorCount(), 32);
+	bool foundBlue = false;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const color::RGBA c = pal.color(i);
+		if (c.b > c.r + 20 && c.g > 160) {
+			foundBlue = true;
+			break;
+		}
+	}
+	EXPECT_TRUE(foundBlue);
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteMajorityGetsRamp) {
+	core::Buffer<color::RGBA> samples;
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(color::RGBA(250, 200, 230, 255));
+	}
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(color::RGBA(230, 140, 180, 255));
+	}
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(color::RGBA(200, 80, 130, 255));
+	}
+	for (int i = 0; i < 20; ++i) {
+		samples.push_back(color::RGBA((uint8_t)(i * 6), (uint8_t)(i * 4), (uint8_t)(i * 5), 255));
+	}
+
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 16);
+	ASSERT_GT(pal.colorCount(), 0);
+	ASSERT_LE(pal.colorCount(), 16);
+	int pinkSlots = 0;
+	int minR = 255;
+	int maxR = 0;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const color::RGBA c = pal.color(i);
+		if (c.r > c.g + 20 && c.r > 150) {
+			++pinkSlots;
+			if (c.r < minR) {
+				minR = c.r;
+			}
+			if (c.r > maxR) {
+				maxR = c.r;
+			}
+		}
+	}
+	EXPECT_GE(pinkSlots, 3);
+	EXPECT_GE(maxR - minR, 20);
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteOutliersDoNotDominate) {
+	core::Buffer<color::RGBA> samples;
+	for (int i = 0; i < 300; ++i) {
+		samples.push_back(color::RGBA(40, 160, 70, 255));
+	}
+	for (int i = 0; i < 40; ++i) {
+		samples.push_back(color::RGBA((uint8_t)(i * 6), (uint8_t)(i * 3), (uint8_t)(255 - i * 4), 255));
+	}
+
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 16);
+	ASSERT_GT(pal.colorCount(), 0);
+	ASSERT_LE(pal.colorCount(), 16);
+	int greenSlots = 0;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const color::RGBA c = pal.color(i);
+		if (c.g > c.r + 40 && c.g > c.b) {
+			++greenSlots;
+		}
+	}
+	EXPECT_GE(greenSlots, 1);
+	EXPECT_LT(greenSlots, pal.colorCount());
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteSplitsFrequentNeighbors) {
+	const color::RGBA a(144, 192, 224, 255);
+	const color::RGBA b(176, 192, 224, 255);
+	ASSERT_NE(a.r >> 2, b.r >> 2);
+
+	core::Buffer<color::RGBA> samples;
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(a);
+	}
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(b);
+	}
+	for (int i = 0; i < 20; ++i) {
+		samples.push_back(color::RGBA((uint8_t)i, (uint8_t)i, (uint8_t)i, 255));
+	}
+
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 8);
+	ASSERT_GE(pal.colorCount(), 2);
+	int blueish = 0;
+	int minR = 255;
+	int maxR = 0;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const color::RGBA c = pal.color(i);
+		if (c.b > 200 && c.g > 160) {
+			++blueish;
+			if (c.r < minR) {
+				minR = c.r;
+			}
+			if (c.r > maxR) {
+				maxR = c.r;
+			}
+		}
+	}
+	EXPECT_GE(blueish, 2);
+	EXPECT_GE(maxR - minR, 4);
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteCollapsesNearDuplicates) {
+	core::Buffer<color::RGBA> samples;
+	const color::RGBA pinkA(254, 201, 237, 255);
+	const color::RGBA pinkB(254, 201, 234, 255);
+	const color::RGBA green(40, 160, 70, 255);
+	for (int i = 0; i < 200; ++i) {
+		samples.push_back(pinkA);
+	}
+	for (int i = 0; i < 180; ++i) {
+		samples.push_back(pinkB);
+	}
+	for (int i = 0; i < 50; ++i) {
+		samples.push_back(green);
+	}
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 2);
+	ASSERT_EQ(2, pal.colorCount());
+	bool hasPink = false;
+	bool hasGreen = false;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const color::RGBA c = pal.color(i);
+		if (c.r > 200 && c.b > 200) {
+			hasPink = true;
+			EXPECT_EQ(pinkA, c);
+		}
+		if (c.g > c.r + 40) {
+			hasGreen = true;
+		}
+	}
+	EXPECT_TRUE(hasPink);
+	EXPECT_TRUE(hasGreen);
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteUsesDominantNotAverage) {
+	core::Buffer<color::RGBA> samples;
+	const color::RGBA pink(240, 160, 200, 255);
+	const color::RGBA dirt(40, 40, 40, 255);
+	for (int i = 0; i < 300; ++i) {
+		samples.push_back(pink);
+	}
+	for (int i = 0; i < 80; ++i) {
+		samples.push_back(dirt);
+	}
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 1);
+	ASSERT_EQ(1, pal.colorCount());
+	const color::RGBA c = pal.color(0);
+	EXPECT_NEAR((int)c.r, 240, 12);
+	EXPECT_NEAR((int)c.g, 160, 12);
+	EXPECT_NEAR((int)c.b, 200, 12);
+}
+
+TEST_F(ColorPaletteTest, testWeightedPaletteDefaultTargetIs256) {
+	core::Buffer<color::RGBA> samples;
+	for (int i = 0; i < 300; ++i) {
+		samples.push_back(color::RGBA((uint8_t)i, (uint8_t)(255 - (i % 256)), 80, 255));
+	}
+	const palette::Palette pal = palette::toPaletteWeighted(samples.data(), samples.size(), 0);
+	ASSERT_GT(pal.colorCount(), 0);
+	ASSERT_LE(pal.colorCount(), 256);
 }
 
 TEST_F(ColorPaletteTest, testQuantizeTargetColorsZeroMeansNoLimit) {

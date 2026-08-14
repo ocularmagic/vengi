@@ -267,6 +267,22 @@ double srgbToLinear(uint8_t c) {
 	return (v <= 0.04045) ? (v / 12.92) : pow((v + 0.055) / 1.055, 2.4);
 }
 
+uint8_t linearToSrgb(float c) {
+	if (c <= 0.0f) {
+		return 0;
+	}
+	if (c >= 1.0f) {
+		return 255;
+	}
+	const float s = (c <= 0.0031308f) ? (12.92f * c) : (1.055f * powf(c, 1.0f / 2.4f) - 0.055f);
+	return (uint8_t)(s * 255.0f + 0.5f);
+}
+
+RGBA linearToSrgb(const glm::vec4 &linear) {
+	const float a = glm::clamp(linear.a, 0.0f, 1.0f);
+	return RGBA(linearToSrgb(linear.r), linearToSrgb(linear.g), linearToSrgb(linear.b), (uint8_t)(a * 255.0f + 0.5f));
+}
+
 void rgbToXyz(uint8_t r, uint8_t g, uint8_t b, double &X, double &Y, double &Z) {
 	double R = srgbToLinear(r);
 	double G = srgbToLinear(g);

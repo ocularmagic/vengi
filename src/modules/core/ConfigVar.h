@@ -147,6 +147,7 @@ constexpr const char *VoxformatImageImportType = "voxformat_imageimporttype";
 constexpr const char *VoxformatImageSliceOffsetAxis = "voxformat_imagesliceoffsetaxis";
 constexpr const char *VoxformatImageSliceOffset = "voxformat_imagesliceoffset";
 constexpr const char *VoxformatImageSaveType = "voxformat_imagesavetype";
+constexpr const char *VoxformatImageSliceHollowInterior = "voxformat_imageslicehollowinterior";
 constexpr const char *VoxformatTexturePath = "voxformat_texturepath";
 constexpr const char *VoxformatSchematicType = "voxformat_schematictype";
 constexpr const char *VoxformatBinvoxVersion = "voxformat_binvoxversion";

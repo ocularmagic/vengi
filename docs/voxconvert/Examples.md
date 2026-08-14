@@ -58,7 +58,7 @@ The `--input` with e.g. `infile.png` will pick the depth map next to the image p
 
 There are other image import types available:
 
-* `voxformat_imageimporttype 0` - import planes/slices in the z direction - or just as plane if not more than one slice was found
+* `voxformat_imageimporttype 0` - import planes/slices in the y direction (top to bottom) - or just as plane if not more than one slice was found
 * `voxformat_imageimporttype 1` - import as heightmap (top view) with color in rgb and height in red channel - also see `voxformat_imageheightmapminheight` - if the color components are not 4 or the image is grayscale, we just import with a fixed color.
 * `voxformat_imageimporttype 2` - import as volume with depth map (default) - also see `voxformat_imagevolumemaxdepth` and `voxformat_imagevolumebothsides`
 
@@ -70,9 +70,11 @@ This imports `yourfile.vox` - merges all the nodes into one and then export the 
 
 There are other png save options available
 
-* `voxformat_imagesavetype 0` - planes/slices in the z direction
+* `voxformat_imagesavetype 0` - planes/slices in the y direction (top to bottom, each image is an XZ cut)
 * `voxformat_imagesavetype 1` - export as heightmap (top view) with color in rgb and height in alpha channel
 * `voxformat_imagesavetype 3` - thumbnail view (this is producing different results between `vengi-voxconvert` and `vengi-voxedit`)
+
+By default (`voxformat_imageslicehollowinterior true`) slice PNGs punch buried exact-white fill (the solid-import interior) to transparent and keep a 1-voxel white liner against the colored shell. Surface white voxels stay opaque. Set the cvar to `false` to write the solid white core as-is.
 
 ## Generate from heightmap
 

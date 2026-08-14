@@ -39,7 +39,7 @@ You can find the detailed description and more cvars by using e.g. the [voxconve
 
 Command & Conquer supports voxel normals. `vengi-voxedit` got a few features to support this. Change the view mode to __Command & Conquer__ to see a normal palette panel and to be able to render the normals for the voxels.
 
-There is also a cvar called `normalpalette` that is used to set the normal palette when importing from meshes.
+There is also a cvar called `normalpalette` that is used to attach a normal palette when importing from meshes. Mesh voxelize does not copy triangle normals onto cubes; use Calculate Normals or the normal brush if you need them (for example for Command & Conquer export).
 
 There are several built-in palettes available that can also be used as an identifier.
 
@@ -53,7 +53,9 @@ You can also specify a filename to a support palette format to load it.
 
 > Possible values are `Octree`, `Wu`, `NeuQuant`, `KMeans` and `MedianCut`
 
-This [cvar](Configuration.md) controls how the input colors are quantized in the palette colors.
+This [cvar](Configuration.md) controls how the input colors are quantized in the palette colors for palette-file reduce and some RGBA formats.
+
+Mesh voxelization does **not** use this cvar. It builds a frequency-weighted median-cut palette from surface samples (`voxformat_targetcolors`, default 128).
 
 Different input images lead to different results for those options. If you are not pleased with the result on one algorithm, it's often worth the try with another one.
 

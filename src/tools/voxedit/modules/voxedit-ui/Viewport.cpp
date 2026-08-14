@@ -645,17 +645,20 @@ void Viewport::update(double nowSeconds, command::CommandExecutionListener *list
 	_viewportUIElementHovered = false;
 	_hovered = false;
 	_visible = false;
+	_focused = false;
 	_cameraManipulated = false;
 	_nowSeconds = nowSeconds;
 
+	bool appliedCameraNode = false;
 	{
 		const scenegraph::FrameIndex currentFrame = _sceneMgr->currentFrame();
 		const bool frameChanged = currentFrame != _lastFrameIdx;
 		_lastFrameIdx = currentFrame;
-		const scenegraph::SceneGraphNodeCamera *activeCam = _sceneMgr->activeCameraNode();
+		scenegraph::SceneGraphNodeCamera *activeCam = _sceneMgr->activeCameraNode();
 		if (activeCam && (frameChanged || _animationPlaying->boolVal() || _lastActiveCameraNodeId != activeCam->id())) {
 			_lastActiveCameraNodeId = activeCam->id();
 			_camera = voxelrender::toCamera(_camera.size(), _sceneMgr->sceneGraph(), *activeCam, currentFrame);
+			appliedCameraNode = true;
 		} else if (!activeCam) {
 			_lastActiveCameraNodeId = InvalidNodeId;
 		}
@@ -686,8 +689,29 @@ void Viewport::update(double nowSeconds, command::CommandExecutionListener *list
 		_pos = ImGui::GetWindowPos();
 		_size = ImGui::GetWindowSize();
 		_visible = true;
+		_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+		// Register this camera when the tab is selected, not only when the 3D
+		// image is hovered. Otherwise Start path tracer keeps the other tab's
+		// camera (usually Free SceneMode).
+		if (_focused) {
+			_sceneMgr->setActiveCamera(&camera(), isFixedCamera());
+		}
 		renderMenuBar(listener);
 		renderViewport();
+		// Orbiting uses hover, not window focus (the scene tree often keeps
+		// focus). Persist the live view onto the selected camera node.
+		if (!appliedCameraNode && (_hovered || _focused || _sceneMgr->activeCamera() == &_camera)) {
+			if (scenegraph::SceneGraphNodeCamera *activeCam = _sceneMgr->activeCameraNode()) {
+				const scenegraph::KeyFrameIndex keyFrameIdx = activeCam->keyFrameForFrame(_sceneMgr->currentFrame());
+				voxelrender::applyCameraToNode(_camera, *activeCam, keyFrameIdx);
+				scenegraph::SceneGraphTransform &transform = activeCam->transform(keyFrameIdx);
+				if (transform.dirty()) {
+					transform.update(_sceneMgr->sceneGraph(), *activeCam, activeCam->keyFrame(keyFrameIdx).frameIdx,
+									 false);
+					_sceneMgr->sceneGraph().markKeyFramesDirty(activeCam->id());
+				}
+			}
+		}
 	}
 	ImGui::End();
 

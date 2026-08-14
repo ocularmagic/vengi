@@ -4947,6 +4947,36 @@ void SceneManager::construct() {
 			}
 		}).setHelp(_("Unreference from model and allow to edit the voxels for this node"));
 
+	command::Command::registerCommand("camera_update")
+		.addArg({"nodeid", command::ArgType::String, true, "", "Camera node ID or UUID"})
+		.setHandler([&] (const command::CommandArgs& args) {
+			video::Camera *camera = activeCamera();
+			if (camera == nullptr) {
+				Log::error("No active camera found");
+				return;
+			}
+			scenegraph::SceneGraphNodeCamera *cameraNode = nullptr;
+			if (!args.has("nodeid")) {
+				cameraNode = _sceneGraph.activeCameraNode();
+			} else {
+				const int nodeId = toNodeId(args, InvalidNodeId);
+				scenegraph::SceneGraphNode &node = _sceneGraph.node(nodeId);
+				if (!node.isCameraNode()) {
+					Log::error("The node %i (%s) is not a camera node", nodeId, node.name().c_str());
+					return;
+				}
+				cameraNode = &scenegraph::toCameraNode(node);
+			}
+			if (cameraNode == nullptr) {
+				Log::error("No camera node selected");
+				return;
+			}
+			const scenegraph::KeyFrameIndex keyFrameIdx = cameraNode->keyFrameForFrame(currentFrame());
+			voxelrender::applyCameraToNode(*camera, *cameraNode, keyFrameIdx);
+			_sceneGraph.updateTransforms();
+			Log::info("Saved view to camera '%s'", cameraNode->name().c_str());
+		}).setHelp(_("Save the current viewport view into the selected camera node"));
+
 	command::Command::registerCommand("camera_activate")
 		.addArg({"nodeid", command::ArgType::String, true, "", "Camera node ID or UUID"})
 		.setHandler([&] (const command::CommandArgs& args) {

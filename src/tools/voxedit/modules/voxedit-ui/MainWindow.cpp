@@ -425,6 +425,9 @@ void MainWindow::mainWidget(double nowSeconds) {
 		// active viewport (or all of them when there is just one).
 		_viewports[i]->setEnableBloom(_viewports.size() == 1 || _viewports[i] == bloomViewport);
 		_viewports[i]->update(nowSeconds, &listener);
+		if (_viewports[i]->isFocused()) {
+			_lastHoveredViewport = _viewports[i];
+		}
 	}
 #if USE_YOCTO
 	_renderPanel.update(TITLE_RENDER, _sceneMgr->sceneGraph());

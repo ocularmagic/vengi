@@ -3,6 +3,8 @@
  */
 
 #include "MeshMaterial.h"
+#include "color/ColorUtil.h"
+#include <glm/common.hpp>
 
 namespace voxelformat {
 
@@ -48,16 +50,37 @@ color::RGBA MeshMaterial::apply(color::RGBA color) const {
 	return color;
 }
 
-bool MeshMaterial::colorAt(color::RGBA &color, const glm::vec2 &uv, bool originUpperLeft) const {
+bool MeshMaterial::colorAt(color::RGBA &color, const glm::vec2 &uv, bool originUpperLeft, bool bilinear,
+						   bool maxChroma) const {
 	if (!texture || !texture->isLoaded()) {
+		if (multiplyColorFactor) {
+			color = color::linearToSrgb(colorFactor);
+			if (transparency > 0.0f) {
+				color.a = (uint8_t)((float)color.a * (1.0f - transparency));
+			}
+			return true;
+		}
 		if (baseColorFactor <= 0.0f) {
 			return false;
 		}
 		color = color::RGBA(0, 0, 0);
+	} else if (maxChroma) {
+		color = texture->colorAtMaxChroma(uv, wrapS, wrapT, originUpperLeft);
+	} else if (bilinear) {
+		color = texture->colorAtBilinear(uv, wrapS, wrapT, originUpperLeft);
 	} else {
 		color = texture->colorAt(uv, wrapS, wrapT, originUpperLeft);
 	}
-	color = apply(color);
+	if (multiplyColorFactor) {
+		const glm::vec4 delta = glm::abs(colorFactor - glm::vec4(1.0f));
+		if (delta.r > 0.0001f || delta.g > 0.0001f || delta.b > 0.0001f || delta.a > 0.0001f) {
+			const glm::vec4 linear((float)color::srgbToLinear(color.r), (float)color::srgbToLinear(color.g),
+								  (float)color::srgbToLinear(color.b), (float)color.a / 255.0f);
+			color = color::linearToSrgb(linear * colorFactor);
+		}
+	} else {
+		color = apply(color);
+	}
 	return true;
 }
 

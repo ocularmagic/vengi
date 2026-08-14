@@ -121,6 +121,40 @@ TEST_F(ImageTest, testUVPixelConversionManual) {
 	EXPECT_EQ(glm::ivec2(0, 1), image::Image::pixels(image::Image::uv(0, 1, 4, 4, true), 4, 4, Repeat, Repeat, true));
 }
 
+TEST_F(ImageTest, testUpperLeftFloorSample) {
+	// glTF UV (0,0) is the upper-left of the first texel. Values still inside that
+	// texel must not snap to the neighbor the way round(uv * (w-1)) would.
+	EXPECT_EQ(glm::ivec2(0, 0), image::Image::pixels(glm::vec2(0.0f, 0.0f), 4, 4, Repeat, Repeat, true));
+	EXPECT_EQ(glm::ivec2(0, 0), image::Image::pixels(glm::vec2(0.24f, 0.24f), 4, 4, Repeat, Repeat, true));
+	EXPECT_EQ(glm::ivec2(1, 1), image::Image::pixels(glm::vec2(0.25f, 0.25f), 4, 4, Repeat, Repeat, true));
+	EXPECT_EQ(glm::ivec2(3, 3), image::Image::pixels(glm::vec2(0.99f, 0.99f), 4, 4, Repeat, Repeat, true));
+	EXPECT_EQ(glm::ivec2(0, 0), image::Image::pixels(glm::vec2(1.0f, 1.0f), 4, 4, Repeat, Repeat, true));
+}
+
+TEST_F(ImageTest, testBilinearMidpoint) {
+	const color::RGBA red(255, 0, 0, 255);
+	const color::RGBA blue(0, 0, 255, 255);
+	const color::RGBA pixels[2] = {red, blue};
+	image::ImagePtr img = image::createEmptyImage("bilinear");
+	ASSERT_TRUE(img->loadRGBA((const uint8_t *)pixels, 2, 1));
+	const color::RGBA mid = img->colorAtBilinear(glm::vec2(0.5f, 0.5f), Repeat, Repeat, true);
+	EXPECT_NEAR(127.0f, (float)mid.r, 8.0f);
+	EXPECT_NEAR(0.0f, (float)mid.g, 8.0f);
+	EXPECT_NEAR(127.0f, (float)mid.b, 8.0f);
+	EXPECT_EQ(255, mid.a);
+	EXPECT_EQ(red, img->colorAt(glm::vec2(0.1f, 0.5f), Repeat, Repeat, true));
+}
+
+TEST_F(ImageTest, testMaxChromaPicksSaturatedNeighbor) {
+	const color::RGBA gray(180, 180, 180, 255);
+	const color::RGBA pink(240, 80, 160, 255);
+	const color::RGBA pixels[2] = {gray, pink};
+	image::ImagePtr img = image::createEmptyImage("maxchroma");
+	ASSERT_TRUE(img->loadRGBA((const uint8_t *)pixels, 2, 1));
+	const color::RGBA picked = img->colorAtMaxChroma(glm::vec2(0.5f, 0.5f), Repeat, Repeat, true);
+	EXPECT_EQ(pink, picked);
+}
+
 TEST_F(ImageTest, testUVPixelConversion) {
 	const image::ImagePtr &img = image::loadImage("test-palette-in.png");
 	for (int x = 0; x < img->width(); ++x) {

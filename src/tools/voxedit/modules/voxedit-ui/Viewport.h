@@ -35,6 +35,7 @@ private:
 	bool _hovered = false;
 	// is this viewport instance visible at all?
 	bool _visible = false;
+	bool _focused = false;
 	bool _viewportUIElementHovered = false;
 	/**
 	 * while we are still modifying the transform or shifting the volume we don't want to
@@ -194,6 +195,7 @@ public:
 
 	bool isHovered() const;
 	bool isVisible() const;
+	bool isFocused() const;
 	void setEnableBloom(bool enable);
 	/**
 	 * Update the ui
@@ -236,6 +238,10 @@ inline void Viewport::setEnableBloom(bool enable) {
 
 inline bool Viewport::isVisible() const {
 	return _visible;
+}
+
+inline bool Viewport::isFocused() const {
+	return _focused;
 }
 
 inline const glm::ivec2 &Viewport::pos() const {

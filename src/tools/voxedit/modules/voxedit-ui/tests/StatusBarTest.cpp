@@ -3,6 +3,7 @@
  */
 
 #include "../StatusBar.h"
+#include "core/String.h"
 #include "voxedit-util/Config.h"
 #include "voxedit-util/SceneManager.h"
 
@@ -32,6 +33,16 @@ void StatusBar::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		IM_CHECK_EQ(gridSize->intVal(), 4);
 		ctx->ItemInputValue("Grid size", 1);
 		IM_CHECK_EQ(gridSize->intVal(), 1);
+	};
+
+	IM_REGISTER_TEST(engine, testCategory(), "no fps readout")->TestFunc = [=](ImGuiTestContext *ctx) {
+		IM_CHECK(focusWindow(ctx, id));
+		ImGuiTestItemList items;
+		ctx->GatherItems(&items, "//$FOCUSED");
+		for (const ImGuiTestItemInfo &item : items) {
+			const core::String label(item.DebugLabel);
+			IM_CHECK(!label.contains("FPS"));
+		}
 	};
 }
 

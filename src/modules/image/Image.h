@@ -132,7 +132,9 @@ public:
 	 * @param h Height of the texture.
 	 * @param wrapS Wrapping mode for the S coordinate.
 	 * @param wrapT Wrapping mode for the T coordinate.
-	 * @param originUpperLeft If true, origin is top-left; otherwise, bottom-left.
+	 * @param originUpperLeft If true, origin is top-left (glTF / D3D) and UVs are
+	 * point-sampled with floor(uv * size). Otherwise origin is bottom-left and UVs
+	 * use the palette-style round(uv * (size - 1)) mapping.
 	 */
 	static glm::ivec2 pixels(const glm::vec2 &uv, int w, int h, TextureWrap wrapS = TextureWrap::Repeat,
 							 TextureWrap wrapT = TextureWrap::Repeat, bool originUpperLeft = false);
@@ -250,6 +252,19 @@ public:
 	 */
 	color::RGBA colorAt(const glm::vec2 &uv, TextureWrap wrapS = TextureWrap::Repeat,
 					   TextureWrap wrapT = TextureWrap::Repeat, bool originUpperLeft = false) const;
+
+	/**
+	 * Bilinear sample at @p uv. Wrap modes and origin match @c colorAt().
+	 */
+	color::RGBA colorAtBilinear(const glm::vec2 &uv, TextureWrap wrapS = TextureWrap::Repeat,
+								TextureWrap wrapT = TextureWrap::Repeat, bool originUpperLeft = false) const;
+
+	/**
+	 * 2x2 neighborhood around @p uv; returns the texel with the highest chroma
+	 * (tie-break: higher value). Avoids baked-shadow / AA fringe without mixing.
+	 */
+	color::RGBA colorAtMaxChroma(const glm::vec2 &uv, TextureWrap wrapS = TextureWrap::Repeat,
+								 TextureWrap wrapT = TextureWrap::Repeat, bool originUpperLeft = false) const;
 
 	/**
 	 * @return true if the image is grayscale, false otherwise.

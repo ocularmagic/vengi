@@ -22,6 +22,11 @@ video::Camera toCamera(const glm::ivec2 &size, const scenegraph::SceneGraphNodeC
 video::Camera toCamera(const glm::ivec2 &size, const scenegraph::SceneGraph &sceneGraph,
 					   const scenegraph::SceneGraphNodeCamera &cameraNode, scenegraph::FrameIndex frameIdx);
 scenegraph::SceneGraphNodeCamera toCameraNode(const video::Camera &camera);
+/**
+ * @brief Write the live viewport camera into an existing camera node (pose, FOV, target/eye mode).
+ */
+void applyCameraToNode(const video::Camera &camera, scenegraph::SceneGraphNodeCamera &cameraNode,
+					   scenegraph::KeyFrameIndex keyFrameIdx = 0);
 enum class SceneCameraMode : uint8_t { Free, Top, Bottom, Left, Right, Front, Back, Max };
 // I18N: These are not translated, because they are also the values of configuration variables
 static constexpr const char *SceneCameraModeStr[] = {N_("Free"), N_("Top"), N_("Bottom"), N_("Left"),

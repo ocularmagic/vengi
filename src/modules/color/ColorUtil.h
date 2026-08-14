@@ -30,6 +30,14 @@ float getDistanceHSB(float hue1, float saturation1, float brightness1, float hue
  * @brief Converts an sRGB component to linear space.
  */
 double srgbToLinear(uint8_t c);
+/**
+ * @brief Converts a linear component in [0, 1] to an sRGB byte (IEC 61966-2-1 OETF).
+ */
+uint8_t linearToSrgb(float c);
+/**
+ * @brief Converts a linear RGBA color (alpha is linear, not sRGB) to 8-bit sRGB.
+ */
+RGBA linearToSrgb(const glm::vec4 &linear);
 
 /**
  * @brief Converts RGB to XYZ color space.

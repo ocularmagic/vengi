@@ -31,6 +31,30 @@ namespace voxelformat {
 #define MaxHeightmapWidth 4096
 #define MaxHeightmapHeight 4096
 
+namespace {
+
+bool isExactWhite(color::RGBA c) {
+	return c.r == 255 && c.g == 255 && c.b == 255 && c.a == 255;
+}
+
+bool isBuriedSolid(const voxel::RawVolume *volume, int x, int y, int z) {
+	if (voxel::isAir(volume->voxel(x + 1, y, z).getMaterial()) ||
+		voxel::isAir(volume->voxel(x - 1, y, z).getMaterial()) ||
+		voxel::isAir(volume->voxel(x, y + 1, z).getMaterial()) ||
+		voxel::isAir(volume->voxel(x, y - 1, z).getMaterial()) ||
+		voxel::isAir(volume->voxel(x, y, z + 1).getMaterial()) ||
+		voxel::isAir(volume->voxel(x, y, z - 1).getMaterial())) {
+		return false;
+	}
+	return true;
+}
+
+int slicePixelIndex(const voxel::Region &region, int x, int z) {
+	return (region.getUpperZ() - z) * region.getWidthInVoxels() + (x - region.getLowerX());
+}
+
+} // namespace
+
 static int extractLayerFromFilename(const core::String &filename) {
 	core::String name = core::string::extractFilename(filename);
 	size_t sep = name.rfind('-');
@@ -70,8 +94,8 @@ bool PNGFormat::importSlices(scenegraph::SceneGraph &sceneGraph, const palette::
 	const int imageWidth = referenceImage->width();
 	const int imageHeight = referenceImage->height();
 	referenceImage.release();
-	int minsZ = 1000000;
-	int maxsZ = -1000000;
+	int minsY = 1000000;
+	int maxsY = -1000000;
 
 	core::DynamicArray<const io::FilesystemEntry*> filteredEntites;
 	filteredEntites.reserve(entities.size());
@@ -88,12 +112,13 @@ bool PNGFormat::importSlices(scenegraph::SceneGraph &sceneGraph, const palette::
 			Log::error("Failed to extract layer from filename %s", layerFilename.c_str());
 			continue;
 		}
-		minsZ = glm::min(minsZ, layer);
-		maxsZ = glm::max(maxsZ, layer);
+		minsY = glm::min(minsY, layer);
+		maxsY = glm::max(maxsY, layer);
 		filteredEntites.push_back(&entity);
 	}
 
-	voxel::Region region(0, 0, minsZ, imageWidth - 1, imageHeight - 1, maxsZ);
+	// Image is an XZ top-down cut; the filename layer is world Y.
+	voxel::Region region(0, minsY, 0, imageWidth - 1, maxsY, imageHeight - 1);
 	voxel::RawVolume *volume = new voxel::RawVolume(region);
 	scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
 	node.setVolume(volume);
@@ -123,7 +148,7 @@ bool PNGFormat::importSlices(scenegraph::SceneGraph &sceneGraph, const palette::
 			Log::debug("Import layer %i of image %s", layer, layerFilename.c_str());
 
 			voxel::RawVolume::Sampler sampler(volume);
-			sampler.setPosition(0, 0, layer);
+			sampler.setPosition(0, layer, imageHeight - 1);
 			for (int y = 0; y < imageHeight; ++y) {
 				voxel::RawVolume::Sampler sampler2 = sampler;
 				for (int x = 0; x < imageWidth; ++x) {
@@ -136,7 +161,7 @@ bool PNGFormat::importSlices(scenegraph::SceneGraph &sceneGraph, const palette::
 					sampler2.setVoxel(voxel::createVoxel(palette, palIdx));
 					sampler2.movePositiveX();
 				}
-				sampler.movePositiveY();
+				sampler.moveNegativeZ();
 			}
 		}
 	};
@@ -417,6 +442,7 @@ bool PNGFormat::saveVolumes(const scenegraph::SceneGraph &sceneGraph, const core
 
 bool PNGFormat::saveSlices(const scenegraph::SceneGraph &sceneGraph, const core::String &filename,
 						   const io::ArchivePtr &archive) const {
+	const bool hollowInterior = core::getVar(cfg::VoxformatImageSliceHollowInterior)->boolVal();
 	const core::String &basename = core::string::stripExtension(filename);
 	for (const auto &e : sceneGraph.nodes()) {
 		const scenegraph::SceneGraphNode &node = e->value;
@@ -427,24 +453,72 @@ bool PNGFormat::saveSlices(const scenegraph::SceneGraph &sceneGraph, const core:
 		core_assert(volume != nullptr);
 		const voxel::Region &region = volume->region();
 		const palette::Palette &palette = node.palette();
-		for (int z = region.getLowerZ(); z <= region.getUpperZ(); ++z) {
+		const int width = region.getWidthInVoxels();
+		const int height = region.getDepthInVoxels();
+		// Top to bottom: one XZ image per Y. First file written is the top of the model.
+		for (int y = region.getUpperY(); y >= region.getLowerY(); --y) {
 			const core::String &uuidStr = node.uuid().str();
 			const core::String &layerFilename =
-				core::String::format("%s-%s-%i.png", basename.c_str(), uuidStr.c_str(), z);
+				core::String::format("%s-%s-%i.png", basename.c_str(), uuidStr.c_str(), y);
 			image::Image image(layerFilename);
 			core::Buffer<color::RGBA> rgba;
-			rgba.resize(region.getWidthInVoxels() * region.getHeightInVoxels());
+			rgba.resize(width * height);
+			core::Buffer<uint8_t> buriedWhite;
+			if (hollowInterior) {
+				buriedWhite.resize(width * height);
+			}
 			bool empty = true;
-			for (int y = region.getUpperY(); y >= region.getLowerY(); --y) {
+			for (int z = region.getUpperZ(); z >= region.getLowerZ(); --z) {
 				for (int x = region.getLowerX(); x <= region.getUpperX(); ++x) {
 					const voxel::Voxel &v = volume->voxel(x, y, z);
 					if (voxel::isAir(v.getMaterial())) {
 						continue;
 					}
 					const color::RGBA color = palette.color(v.getColor());
-					const int idx = (region.getUpperY() - y) * region.getWidthInVoxels() + (x - region.getLowerX());
+					const int idx = slicePixelIndex(region, x, z);
 					rgba[idx] = color;
 					empty = false;
+					if (hollowInterior && isExactWhite(color) && isBuriedSolid(volume, x, y, z)) {
+						buriedWhite[idx] = 1;
+					}
+				}
+			}
+			if (hollowInterior && !empty) {
+				static const int ndx[4] = {1, -1, 0, 0};
+				static const int ndz[4] = {0, 0, 1, -1};
+				for (int z = region.getLowerZ(); z <= region.getUpperZ(); ++z) {
+					for (int x = region.getLowerX(); x <= region.getUpperX(); ++x) {
+						const int idx = slicePixelIndex(region, x, z);
+						if (!buriedWhite[idx]) {
+							continue;
+						}
+						bool keepLiner = false;
+						for (int i = 0; i < 4; ++i) {
+							const int nx = x + ndx[i];
+							const int nz = z + ndz[i];
+							if (!region.containsPoint(nx, y, nz)) {
+								continue;
+							}
+							const color::RGBA neighbor = rgba[slicePixelIndex(region, nx, nz)];
+							if (neighbor.a == 0) {
+								continue;
+							}
+							if (!isExactWhite(neighbor)) {
+								keepLiner = true;
+								break;
+							}
+						}
+						if (!keepLiner) {
+							rgba[idx] = color::RGBA(0, 0, 0, 0);
+						}
+					}
+				}
+				empty = true;
+				for (int i = 0; i < width * height; ++i) {
+					if (rgba[i].a != 0) {
+						empty = false;
+						break;
+					}
 				}
 			}
 			if (empty) {
@@ -452,7 +526,7 @@ bool PNGFormat::saveSlices(const scenegraph::SceneGraph &sceneGraph, const core:
 				continue;
 			}
 
-			if (!image.loadRGBA((const uint8_t *)rgba.data(), region.getWidthInVoxels(), region.getHeightInVoxels())) {
+			if (!image.loadRGBA((const uint8_t *)rgba.data(), width, height)) {
 				Log::error("Failed to load sliced rgba data %s", layerFilename.c_str());
 				return false;
 			}

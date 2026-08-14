@@ -8,18 +8,20 @@
 #include "core/ConfigVar.h"
 #include "core/GLM.h"
 #include "core/Log.h"
+#include "color/ColorUtil.h"
 #include "color/RGBA.h"
 #include "core/StringUtil.h"
 #include "core/UUID.h"
 #include "core/Var.h"
+#include "core/collection/Buffer.h"
 #include "core/collection/DynamicArray.h"
 #include "core/collection/Map.h"
 #include "core/concurrent/Atomic.h"
 #include "io/Archive.h"
 #include "meshoptimizer.h"
 #include "palette/NormalPalette.h"
-#include "palette/NormalPaletteLookup.h"
 #include "palette/PaletteLookup.h"
+#include "palette/PaletteUtil.h"
 #include "scenegraph/SceneGraph.h"
 #include "scenegraph/SceneGraphNode.h"
 #include "voxel/ChunkMesh.h"
@@ -199,7 +201,7 @@ void MeshFormat::transformTris(const voxel::Region &region, const MeshTriCollect
 							   const MeshMaterialArray &meshMaterialArray,
 							   const palette::NormalPalette &normalPalette) const {
 	Log::debug("subdivided into %i triangles", (int)tris.size());
-	palette::NormalPaletteLookup normalLookup(normalPalette);
+	(void)normalPalette;
 	const int parallel = app::for_parallel_size(0, tris.size());
 	core::DynamicArray<PosMap> localMaps;
 	localMaps.resize(parallel);
@@ -207,7 +209,7 @@ void MeshFormat::transformTris(const voxel::Region &region, const MeshTriCollect
 		localMaps[i].reserve(((int)tris.size() / parallel) + 1);
 	}
 	core::AtomicInt mapIdx(0);
-	auto fn = [&tris, &region, &normalLookup, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
+	auto fn = [&tris, &region, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
 		const int idx = mapIdx.increment();
 		PosMap &localMap = localMaps[idx];
 		for (int i = start; i < end; ++i) {
@@ -224,13 +226,8 @@ void MeshFormat::transformTris(const voxel::Region &region, const MeshTriCollect
 			glm::vec3 c = meshTri.center();
 			convertToVoxelGrid(c);
 
-			int normalIdx = normalLookup.getClosestMatch(meshTri.normal());
-			if (normalIdx == palette::PaletteNormalNotFound) {
-				normalIdx = NO_NORMAL;
-			}
-
 			const glm::ivec3 p(c);
-			addToPosMap(localMap, region, rgba, area, normalIdx, p, meshTri.materialIdx);
+			addToPosMap(localMap, region, rgba, area, NO_NORMAL, p, meshTri.materialIdx);
 		}
 	};
 	app::for_parallel(0, tris.size(), fn);
@@ -243,7 +240,7 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 										  const MeshMaterialArray &meshMaterialArray,
 										  const palette::NormalPalette &normalPalette) const {
 	Log::debug("axis aligned %i triangles", (int)tris.size());
-	palette::NormalPaletteLookup normalLookup(normalPalette);
+	(void)normalPalette;
 	const int parallel = app::for_parallel_size(0, tris.size());
 	core::DynamicArray<PosMap> localMaps;
 	localMaps.resize(parallel);
@@ -251,7 +248,7 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 		localMaps[i].reserve(((int)tris.size() / parallel) + 1);
 	}
 	core::AtomicInt mapIdx(0);
-	auto fn = [&tris, &normalLookup, region, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
+	auto fn = [&tris, region, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
 		const int idx = mapIdx.increment();
 		PosMap &localMap = localMaps[idx];
 		for (int i = start; i < end; ++i) {
@@ -268,10 +265,6 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 			Log::trace("maxs: %i:%i:%i", maxs.x, maxs.y, maxs.z);
 			Log::trace("normal: %f:%f:%f", normal.x, normal.y, normal.z);
 			Log::trace("sideDelta: %i:%i:%i", sideDelta.x, sideDelta.y, sideDelta.z);
-			int normalIdx = normalLookup.getClosestMatch(normal);
-			if (normalIdx == palette::PaletteNormalNotFound) {
-				normalIdx = NO_NORMAL;
-			}
 			for (int x = mins.x; x < maxs.x; x++) {
 				if (!region.containsPointInX(x + sideDelta.x)) {
 					continue;
@@ -297,7 +290,7 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 							continue;
 						}
 						const glm::ivec3 p(x + sideDelta.x, y + sideDelta.y, z + sideDelta.z);
-						addToPosMap(localMap, region, rgba, area, normalIdx, p, meshTri.materialIdx);
+						addToPosMap(localMap, region, rgba, area, NO_NORMAL, p, meshTri.materialIdx);
 					}
 				}
 			}
@@ -634,8 +627,24 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 	node.setNormalPalette(normalPalette);
 
 	const bool fillHollow = core::getVar(cfg::VoxformatFillHollow)->boolVal();
+	bool hasTexture = false;
+	for (const MeshMaterialPtr &mat : meshMaterialArray) {
+		if (mat && mat->texture && mat->texture->isLoaded()) {
+			hasTexture = true;
+			break;
+		}
+	}
+	// Textured meshes default to occupancy + nearest-surface sampling. Explicit Fast
+	// keeps the old rasterizer. Axis-aligned voxel meshes keep the dedicated path.
+	const bool useSolid = voxelizeMode == VoxelizeMode::Solid ||
+						  (!useAxisAligned && voxelizeMode == VoxelizeMode::HighQuality && hasTexture);
 	const int64_t maxVoxels = (int64_t)vdim.x * vdim.y * vdim.z;
-	if (useAxisAligned) {
+	if (useSolid) {
+		Log::debug("Solid voxelize (occupancy + nearest-surface color), fillHollow=%s", fillHollow ? "true" : "false");
+		node.createVolume(region);
+		voxelizeSolid(node, region, tris, meshMaterialArray, normalPalette, fillHollow);
+		tris.release();
+	} else if (useAxisAligned) {
 		// estimate capacity from triangle bounding volumes (each axis-aligned tri covers a 2D area)
 		int64_t estimatedVoxels = 0;
 		for (const voxelformat::MeshTri &tri : tris) {
@@ -688,16 +697,10 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 		palette::PaletteLookup palLookup(palette);
 		node.createVolume(region);
 		voxel::RawVolumeWrapper wrapper(node.volume());
-		palette::NormalPaletteLookup normalLookup(normalPalette);
 		for (const voxelformat::MeshTri &meshTri : tris) {
 			auto fn = [&](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
 				const color::RGBA color = flattenRGB(colorAt(tri, meshMaterialArray, uv));
-				const glm::vec3 &normal = tri.normal();
-				int normalIdx = normalLookup.getClosestMatch(normal);
-				if (normalIdx == palette::PaletteNormalNotFound) {
-					normalIdx = NO_NORMAL;
-				}
-				const voxel::Voxel voxel = voxel::createVoxel(palette, palLookup.findClosestIndex(color), normalIdx);
+				const voxel::Voxel voxel = voxel::createVoxel(palette, palLookup.findClosestIndex(color), NO_NORMAL);
 				wrapper.setVoxel(x, y, z, voxel);
 			};
 			voxelizeTriangle(trisMins, meshTri, fn);
@@ -812,6 +815,8 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 	const bool shouldCreatePalette = core::getVar(cfg::VoxelCreatePalette)->boolVal();
 	if (shouldCreatePalette) {
 		palette::RGBAMaterialMap colorMaterials;
+		core::Buffer<color::RGBA> samples;
+		samples.reserve(posMap.size());
 		Log::debug("create palette");
 		for (const auto &entry : posMap) {
 			if (stopExecution()) {
@@ -823,6 +828,7 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 			if (rgba.a <= AlphaThreshold) {
 				continue;
 			}
+			samples.push_back(rgba);
 			MeshMaterialIndex materialIdx = pos.getMaterialIndex();
 			const palette::Material *newMat = materialIdx >= 0 && materialIdx < (int)meshMaterialArray.size() ? &meshMaterialArray[materialIdx]->material : nullptr;
 			auto iter = colorMaterials.find(rgba);
@@ -832,15 +838,32 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 				colorMaterials.put(rgba, newMat);
 			}
 		}
-		createPalette(colorMaterials, palette);
+		const int targetColors = core::getVar(cfg::VoxformatTargetColors)->intVal();
+		palette = palette::toPaletteWeighted(samples.data(), samples.size(), targetColors);
+		for (const auto &entry : colorMaterials) {
+			if (entry->value == nullptr) {
+				continue;
+			}
+			const int palIdx = palette.getClosestMatch(entry->key);
+			if (palIdx == palette::PaletteColorNotFound) {
+				continue;
+			}
+			palette.setMaterial(palIdx, *entry->value);
+		}
 	} else {
 		palette = voxel::getPalette();
 	}
 
 	Log::debug("create voxels for %i positions", (int)posMap.size());
 	voxel::RawVolume *volume = node.volume();
-	palette::PaletteLookup palLookup(palette);
-	auto fn = [&palette, volume, &palLookup, this](int idx, const PosSampling &posSampling) {
+	const int palCount = palette.colorCount();
+	core::Buffer<float> palH(palCount);
+	core::Buffer<float> palS(palCount);
+	core::Buffer<float> palV(palCount);
+	for (int i = 0; i < palCount; ++i) {
+		color::getHSB(palette.color(i), palH[i], palS[i], palV[i]);
+	}
+	auto fn = [&palette, volume, &palH, &palS, &palV, palCount, this](int idx, const PosSampling &posSampling) {
 		if (stopExecution()) {
 			return;
 		}
@@ -848,7 +871,20 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 		if (rgba.a <= AlphaThreshold) {
 			return;
 		}
-		const uint8_t colorIndex = palLookup.findClosestIndex(rgba);
+		float h = 0.0f;
+		float s = 0.0f;
+		float v = 0.0f;
+		color::getHSB(rgba, h, s, v);
+		int best = 0;
+		float bestD = 1e30f;
+		for (int i = 0; i < palCount; ++i) {
+			const float d = color::getDistanceHSB(h, s, v, palH[i], palS[i], palV[i]);
+			if (d < bestD) {
+				bestD = d;
+				best = i;
+			}
+		}
+		const uint8_t colorIndex = (uint8_t)best;
 		const voxel::Voxel voxel = voxel::createVoxel(palette, colorIndex, posSampling.getNormal());
 		core_assert_msg_always(volume->setVoxel(idx, voxel), "Failed to set voxel at index %i (%s)", idx, volume->region().toString().c_str());
 	};

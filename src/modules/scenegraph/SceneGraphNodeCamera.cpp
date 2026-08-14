@@ -76,4 +76,42 @@ void SceneGraphNodeCamera::setAspectRatio(float val) {
 	setProperty(PropCamAspect, core::string::toString(val));
 }
 
+bool SceneGraphNodeCamera::isTargetRotation() const {
+	const core::String &val = property(PropCamRotation);
+	if (val.empty()) {
+		return true;
+	}
+	return val != "eye";
+}
+
+void SceneGraphNodeCamera::setTargetRotation(bool target) {
+	setProperty(PropCamRotation, target ? "target" : "eye");
+}
+
+void SceneGraphNodeCamera::setTarget(const glm::vec3 &target) {
+	setProperty(PropCamTarget, core::String::format("%f %f %f", target.x, target.y, target.z));
+}
+
+glm::vec3 SceneGraphNodeCamera::target() const {
+	const core::String &val = property(PropCamTarget);
+	if (val.empty()) {
+		return glm::vec3(0.0f);
+	}
+	float out[3] = {0.0f, 0.0f, 0.0f};
+	core::string::parseVec3(val, out);
+	return glm::vec3(out[0], out[1], out[2]);
+}
+
+void SceneGraphNodeCamera::setTargetDistance(float distance) {
+	setProperty(PropCamTargetDistance, core::string::toString(distance));
+}
+
+float SceneGraphNodeCamera::targetDistance() const {
+	const float distance = propertyf(PropCamTargetDistance);
+	if (distance <= 0.0f) {
+		return 100.0f;
+	}
+	return distance;
+}
+
 } // namespace scenegraph

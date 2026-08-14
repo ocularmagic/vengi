@@ -227,6 +227,62 @@ TEST_F(RenderUtilTest, testConfigureCameraSmallScene) {
 	EXPECT_LT(distance, 50.0f);
 }
 
+TEST_F(RenderUtilTest, testCameraNodeStoresRotationAndTarget) {
+	video::Camera camera;
+	camera.setSize(glm::ivec2(800, 600));
+	camera.setRotationType(video::CameraRotationType::Target);
+	camera.setWorldPosition(glm::vec3(10.0f, 20.0f, 30.0f));
+	camera.setTarget(glm::vec3(1.0f, 2.0f, 3.0f));
+	camera.setTargetDistance(25.0f);
+	camera.setFieldOfView(45.0f);
+	camera.update(0.0);
+
+	const scenegraph::SceneGraphNodeCamera node = toCameraNode(camera);
+	EXPECT_TRUE(node.isTargetRotation());
+	EXPECT_NEAR(node.targetDistance(), camera.targetDistance(), 0.01f);
+	EXPECT_NEAR(node.target().x, camera.target().x, 0.01f);
+	EXPECT_NEAR(node.target().y, camera.target().y, 0.01f);
+	EXPECT_NEAR(node.target().z, camera.target().z, 0.01f);
+
+	const video::Camera restored = toCamera(glm::ivec2(800, 600), node);
+	EXPECT_EQ(video::CameraRotationType::Target, restored.rotationType());
+	EXPECT_NEAR(restored.targetDistance(), camera.targetDistance(), 0.01f);
+	EXPECT_NEAR(restored.target().x, camera.target().x, 0.01f);
+	EXPECT_NEAR(restored.target().y, camera.target().y, 0.01f);
+	EXPECT_NEAR(restored.target().z, camera.target().z, 0.01f);
+}
+
+TEST_F(RenderUtilTest, testCameraNodeStoresEyeRotation) {
+	video::Camera camera;
+	camera.setSize(glm::ivec2(800, 600));
+	camera.setRotationType(video::CameraRotationType::Eye);
+	camera.setWorldPosition(glm::vec3(4.0f, 5.0f, 6.0f));
+	camera.update(0.0);
+
+	scenegraph::SceneGraphNodeCamera node = toCameraNode(camera);
+	EXPECT_FALSE(node.isTargetRotation());
+
+	const video::Camera restored = toCamera(glm::ivec2(800, 600), node);
+	EXPECT_EQ(video::CameraRotationType::Eye, restored.rotationType());
+}
+
+TEST_F(RenderUtilTest, testApplyCameraToNodeUpdatesExisting) {
+	video::Camera camera;
+	camera.setSize(glm::ivec2(800, 600));
+	camera.setRotationType(video::CameraRotationType::Target);
+	camera.setWorldPosition(glm::vec3(1.0f, 2.0f, 3.0f));
+	camera.setTarget(glm::vec3(0.0f, 0.0f, 0.0f));
+	camera.update(0.0);
+
+	scenegraph::SceneGraphNodeCamera node = toCameraNode(camera);
+	camera.setRotationType(video::CameraRotationType::Eye);
+	camera.setWorldPosition(glm::vec3(8.0f, 9.0f, 10.0f));
+	camera.update(0.0);
+	applyCameraToNode(camera, node, 0);
+	EXPECT_FALSE(node.isTargetRotation());
+	EXPECT_NEAR(node.transform(0).worldTranslation().x, 8.0f, 0.01f);
+}
+
 TEST_F(RenderUtilTest, testConfigureCameraLargeScene) {
 	video::Camera camera;
 	camera.setSize(glm::ivec2(1920, 1080));

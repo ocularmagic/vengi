@@ -161,11 +161,12 @@ static void saveOptionsPng(const io::FilesystemEntry &entry) {
 	const int currentImageType = genericPngOptions(false, imageTypeVar);
 
 	if (currentImageType == voxelformat::PNGFormat::ImageType::Plane) {
+		ImGui::CheckboxVar(cfg::VoxformatImageSliceHollowInterior);
 		ImGui::SeparatorText(_("Layer information"));
 		const core::String basename = core::string::extractFilename(entry.name);
 		ImGui::IconDialog(ICON_LC_INFO, _("This is saving several images as layers per object.\n\n"
 										"The name of the files will include the uuid of the node\n"
-										"and the z layer index."));
+										"and the y layer index (top to bottom)."));
 	}
 }
 
@@ -299,6 +300,8 @@ static void loadOptionsMesh(const io::FormatDescription *desc) {
 	if (meshFormat) {
 		core::VarPtr voxelSize = core::getVar(cfg::VoxformatVoxelSize);
 		ImGui::InputVarFloat(voxelSize);
+		ImGui::TooltipTextUnformatted(
+			_("Number of voxels along the longest mesh axis. 0 = use the scale fields below."));
 		ImGui::BeginDisabled(voxelSize->intVal() > 0);
 		{
 			ImGui::InputVarFloat(cfg::VoxformatScale);
@@ -336,11 +339,18 @@ static void loadOptionsMesh(const io::FormatDescription *desc) {
 		ImGui::InputVarString(core::getVar(cfg::VoxformatGMLFilenameFilter));
 	}
 
-	const char *voxelizationModes[] = {_("high quality"), _("faster and less memory")};
+	const char *voxelizationModes[] = {_("high quality"), _("faster and less memory"),
+									  _("solid (nearest-surface color)")};
 	static_assert(voxelformat::MeshFormat::VoxelizeMode::HighQuality == 0, "HighQuality must be at index 0");
 	static_assert(voxelformat::MeshFormat::VoxelizeMode::Fast == 1, "Fast must be at index 1");
+	static_assert(voxelformat::MeshFormat::VoxelizeMode::Solid == 2, "Solid must be at index 2");
 	const core::VarPtr &voxelizationVar = core::getVar(cfg::VoxformatVoxelizeMode);
-	const int currentVoxelizationMode = voxelizationVar->intVal();
+	int currentVoxelizationMode = voxelizationVar->intVal();
+	if (currentVoxelizationMode < 0) {
+		currentVoxelizationMode = 0;
+	} else if (currentVoxelizationMode >= lengthof(voxelizationModes)) {
+		currentVoxelizationMode = lengthof(voxelizationModes) - 1;
+	}
 
 	if (ImGui::BeginCombo(_("Voxelization mode"), voxelizationModes[currentVoxelizationMode])) {
 		for (int i = 0; i < lengthof(voxelizationModes); ++i) {
