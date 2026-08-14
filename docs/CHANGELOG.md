@@ -74,6 +74,7 @@ VoxEdit:
    - Added isometric camera mode
    - Added shortcut to render the pivot to the Node Inspector panel
    - Added support for browsing the voxbox store
+   - Windows exe icons no longer get overwritten when several tools share one CMakeLists
 
 VoxConvert:
 
