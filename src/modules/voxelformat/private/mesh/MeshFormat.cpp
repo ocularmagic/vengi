@@ -823,7 +823,6 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 				return;
 			}
 			const PosSampling &pos = entry->second;
-			// TODO: PERF: don't do pos.getColor call twice
 			const color::RGBA rgba = pos.getColor(_flattenFactor, _weightedAverage);
 			if (rgba.a <= AlphaThreshold) {
 				continue;

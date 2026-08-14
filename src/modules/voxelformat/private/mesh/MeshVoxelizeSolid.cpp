@@ -111,8 +111,9 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 	core::Buffer<int32_t> head((size_t)voxelCount, 0xFF);
 	core::DynamicArray<int32_t> next;
 	core::DynamicArray<int32_t> triOf;
-	next.reserve((int)tris.size());
-	triOf.reserve((int)tris.size());
+	const int listReserve = (int)glm::min(voxelCount, (int64_t)tris.size() * 8);
+	next.reserve(listReserve);
+	triOf.reserve(listReserve);
 
 	const glm::vec3 voxelHalf(0.5f);
 	const glm::ivec3 rmin = region.getLowerCorner();
@@ -152,7 +153,7 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 	}
 
 	if (fillHollow) {
-		core::DynamicArray<glm::ivec3> queue;
+		core::DynamicArray<int64_t> queue;
 		queue.reserve((int)glm::min(voxelCount / 8, (int64_t)262144));
 		auto seed = [&](int x, int y, int z) {
 			if (!region.containsPoint(x, y, z)) {
@@ -163,7 +164,7 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 				return;
 			}
 			occupancy[idx] = OccExterior;
-			queue.push_back(glm::ivec3(x, y, z));
+			queue.push_back(idx);
 		};
 		for (int y = rmin.y; y <= rmax.y; ++y) {
 			for (int x = rmin.x; x <= rmax.x; ++x) {
@@ -190,7 +191,7 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 			if ((qhead & 65535) == 0 && stopExecution()) {
 				return;
 			}
-			const glm::ivec3 p = queue[qhead++];
+			const glm::ivec3 p = region.fromIndex(queue[qhead++]);
 			for (int i = 0; i < 6; ++i) {
 				const glm::ivec3 n = p + dirs[i];
 				if (!region.containsPoint(n)) {
@@ -201,7 +202,7 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 					continue;
 				}
 				occupancy[idx] = OccExterior;
-				queue.push_back(n);
+				queue.push_back(idx);
 			}
 		}
 
@@ -297,7 +298,11 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 	uint8_t whiteIdx = 0;
 	const color::RGBA white(255, 255, 255, 255);
 	if (!pal.tryAdd(white, false, &whiteIdx, false)) {
-		if (pal.colorCount() <= 0 || pal.color(whiteIdx) != white) {
+		if (pal.colorCount() < palette::PaletteMaxColors) {
+			whiteIdx = (uint8_t)pal.colorCount();
+			pal.setSize(pal.colorCount() + 1);
+			pal.setColor(whiteIdx, white);
+		} else if (pal.colorCount() <= 0 || pal.color(whiteIdx) != white) {
 			const int idx = pal.getClosestMatch(white);
 			if (idx >= 0) {
 				whiteIdx = (uint8_t)idx;
