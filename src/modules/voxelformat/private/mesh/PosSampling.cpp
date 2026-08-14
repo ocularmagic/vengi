@@ -39,6 +39,7 @@ MeshMaterialIndex PosSampling::getMaterialIndex() const {
 }
 
 bool PosSampling::add(uint32_t area, color::RGBA color, uint8_t normal, MeshMaterialIndex materialIdx) {
+	_cachedColorValid = false;
 	// TODO: VOXELFORMAT: why?
 	if (entries[0].color == color) {
 		return false;
@@ -99,9 +100,14 @@ bool PosSampling::add(uint32_t area, color::RGBA color, uint8_t normal, MeshMate
 }
 
 color::RGBA PosSampling::getColor(uint8_t flattenFactor, bool weightedAverage) const {
+	if (_cachedColorValid) {
+		return _cachedColor;
+	}
 	if (entries[1].area == 0) {
-		return color::flattenRGB(entries[0].color.r, entries[0].color.g, entries[0].color.b, entries[0].color.a,
-									   flattenFactor);
+		_cachedColor = color::flattenRGB(entries[0].color.r, entries[0].color.g, entries[0].color.b, entries[0].color.a,
+										 flattenFactor);
+		_cachedColorValid = true;
+		return _cachedColor;
 	}
 	if (weightedAverage) {
 		uint32_t sumArea = 0;
@@ -110,7 +116,9 @@ color::RGBA PosSampling::getColor(uint8_t flattenFactor, bool weightedAverage) c
 		}
 		color::RGBA color(0, 0, 0, 255);
 		if (sumArea == 0) {
-			return color;
+			_cachedColor = color;
+			_cachedColorValid = true;
+			return _cachedColor;
 		}
 		for (const PosSamplingEntry &pe : entries) {
 			if (pe.area == 0) {
@@ -118,7 +126,9 @@ color::RGBA PosSampling::getColor(uint8_t flattenFactor, bool weightedAverage) c
 			}
 			color = color::RGBA::mix(color, pe.color, (float)pe.area / (float)sumArea);
 		}
-		return color::flattenRGB(color.r, color.g, color.b, color.a, flattenFactor);
+		_cachedColor = color::flattenRGB(color.r, color.g, color.b, color.a, flattenFactor);
+		_cachedColorValid = true;
+		return _cachedColor;
 	}
 	color::RGBA color(0, 0, 0, AlphaThreshold);
 	uint32_t area = 0;
@@ -131,7 +141,9 @@ color::RGBA PosSampling::getColor(uint8_t flattenFactor, bool weightedAverage) c
 			color = pe.color;
 		}
 	}
-	return color::flattenRGB(color.r, color.g, color.b, color.a, flattenFactor);
+	_cachedColor = color::flattenRGB(color.r, color.g, color.b, color.a, flattenFactor);
+	_cachedColorValid = true;
+	return _cachedColor;
 }
 
 } // namespace voxelformat

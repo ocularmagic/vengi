@@ -37,6 +37,8 @@ struct PosSamplingEntry {
 class PosSampling {
 private:
 	core::Array<PosSamplingEntry, MaxTriangleColorContributions> entries;
+	mutable color::RGBA _cachedColor{0, 0, 0, 0};
+	mutable bool _cachedColorValid = false;
 
 public:
 	PosSampling(uint32_t area, color::RGBA color, uint8_t normal, MeshMaterialIndex materialIdx) {

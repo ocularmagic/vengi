@@ -22,11 +22,11 @@ Do not expect triangle-overlap averaging, largest-face heuristics, or `centerUV`
 
 Size is unchanged from the rest of Vengi: `voxformat_voxelsize` (voxels on the longest axis) or `voxformat_scale`. VoxEdit does not have MagicaVoxel's 256-voxel-per-axis limit.
 
-## High Quality Mode (Default)
+## High Quality Mode (untextured default)
 
 **Mode:** `voxformat_voxelizemode=0`
 
-This is the recommended voxelization mode that produces the most accurate and visually pleasing results.
+Used for untextured meshes when mode is left at `0`. Textured imports use Solid instead. This mode subdivides triangles for coverage.
 
 ### How It Works
 
@@ -180,7 +180,7 @@ Quick selection guide:
 | Scenario | Recommended Mode | Reason |
 |----------|------------------|--------|
 | Textured glTF / GLB / OBJ | Solid (default for textures) | Nearest-surface UV, filled interiors |
-| Detailed untextured models | High Quality | Preserves fine features and thin surfaces |
+| Detailed untextured models | High Quality (mode 0) | Preserves fine features and thin surfaces |
 | Large terrain meshes | Fast | Better memory usage and performance |
 | Architectural models | Solid or High Quality | Solid if textured; otherwise subdivision |
 | Preview/draft work | Fast | Quick turnaround time |

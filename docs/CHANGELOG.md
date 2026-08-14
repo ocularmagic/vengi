@@ -75,6 +75,7 @@ VoxEdit:
    - Added shortcut to render the pivot to the Node Inspector panel
    - Added support for browsing the voxbox store
    - Windows exe icons no longer get overwritten when several tools share one CMakeLists
+   - Solid voxelize uses less memory for occupancy lists and the exterior flood
 
 VoxConvert:
 

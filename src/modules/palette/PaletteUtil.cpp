@@ -84,15 +84,6 @@ namespace {
 struct WeightedBin {
 	color::RGBA c{0, 0, 0, 255};
 	uint32_t n = 0;
-	uint8_t avgR() const {
-		return c.r;
-	}
-	uint8_t avgG() const {
-		return c.g;
-	}
-	uint8_t avgB() const {
-		return c.b;
-	}
 };
 
 static void quantizeBinsToRamps(const core::DynamicArray<WeightedBin> &bins, int maxColors,
@@ -119,9 +110,9 @@ static void quantizeBinsToRamps(const core::DynamicArray<WeightedBin> &bins, int
 		void add(int binIndex, const WeightedBin &bin) {
 			idx.push_back(binIndex);
 			n += bin.n;
-			const uint8_t ar = bin.avgR();
-			const uint8_t ag = bin.avgG();
-			const uint8_t ab = bin.avgB();
+			const uint8_t ar = bin.c.r;
+			const uint8_t ag = bin.c.g;
+			const uint8_t ab = bin.c.b;
 			if (ar < minR) {
 				minR = ar;
 			}
@@ -204,26 +195,26 @@ static void quantizeBinsToRamps(const core::DynamicArray<WeightedBin> &bins, int
 			uint8_t va;
 			uint8_t vb;
 			if (channel == 0) {
-				va = bins[ia].avgR();
-				vb = bins[ib].avgR();
+				va = bins[ia].c.r;
+				vb = bins[ib].c.r;
 			} else if (channel == 1) {
-				va = bins[ia].avgG();
-				vb = bins[ib].avgG();
+				va = bins[ia].c.g;
+				vb = bins[ib].c.g;
 			} else {
-				va = bins[ia].avgB();
-				vb = bins[ib].avgB();
+				va = bins[ia].c.b;
+				vb = bins[ib].c.b;
 			}
 			return va > vb;
 		});
 
 		auto channelVal = [&](int binIndex) -> uint8_t {
 			if (channel == 0) {
-				return bins[binIndex].avgR();
+				return bins[binIndex].c.r;
 			}
 			if (channel == 1) {
-				return bins[binIndex].avgG();
+				return bins[binIndex].c.g;
 			}
-			return bins[binIndex].avgB();
+			return bins[binIndex].c.b;
 		};
 
 		int split = 1;
@@ -308,18 +299,6 @@ palette::Palette toPaletteWeighted(const color::RGBA *samples, size_t sampleCoun
 	struct Bin {
 		color::RGBA c{0, 0, 0, 255};
 		uint32_t n = 0;
-		uint8_t avgR() const {
-			return c.r;
-		}
-		uint8_t avgG() const {
-			return c.g;
-		}
-		uint8_t avgB() const {
-			return c.b;
-		}
-		color::RGBA color() const {
-			return c;
-		}
 	};
 
 	// Exact surface colors, weighted by voxel count. Do not pre-average:
@@ -356,7 +335,7 @@ palette::Palette toPaletteWeighted(const color::RGBA *samples, size_t sampleCoun
 		bins.sort([](const Bin &a, const Bin &b) { return a.n < b.n; });
 		palette.setSize((int)bins.size());
 		for (int i = 0; i < (int)bins.size(); ++i) {
-			palette.setColor(i, bins[i].color());
+			palette.setColor(i, bins[i].c);
 		}
 		Log::info("Loaded %i unique colors from %i voxels", (int)bins.size(), (int)total);
 		palette.markDirty();
@@ -497,201 +476,6 @@ palette::Palette toPaletteWeighted(const color::RGBA *samples, size_t sampleCoun
 	return palette;
 }
 
-#if 0
-	struct BoxUnused {
-		core::DynamicArray<int> idx;
-		uint32_t n = 0;
-		uint8_t minR = 255, maxR = 0;
-		uint8_t minG = 255, maxG = 0;
-		uint8_t minB = 255, maxB = 0;
-
-		void add(int binIndex, const Bin &bin) {
-			idx.push_back(binIndex);
-			n += bin.n;
-			const uint8_t ar = bin.avgR();
-			const uint8_t ag = bin.avgG();
-			const uint8_t ab = bin.avgB();
-			if (ar < minR) {
-				minR = ar;
-			}
-			if (ar > maxR) {
-				maxR = ar;
-			}
-			if (ag < minG) {
-				minG = ag;
-			}
-			if (ag > maxG) {
-				maxG = ag;
-			}
-			if (ab < minB) {
-				minB = ab;
-			}
-			if (ab > maxB) {
-				maxB = ab;
-			}
-		}
-
-		int rangeR() const {
-			return (int)maxR - (int)minR;
-		}
-		int rangeG() const {
-			return (int)maxG - (int)minG;
-		}
-		int rangeB() const {
-			return (int)maxB - (int)minB;
-		}
-		bool canSplit() const {
-			return idx.size() > 1 && (rangeR() > 0 || rangeG() > 0 || rangeB() > 0);
-		}
-		uint64_t importance() const {
-			const int dr = rangeR();
-			const int dg = rangeG();
-			const int db = rangeB();
-			return (uint64_t)n * (uint64_t)(dr + dg + db);
-		}
-	};
-
-	core::DynamicArray<Box> boxes;
-	boxes.reserve(maxColors);
-	{
-		Box root;
-		root.idx.reserve((int)bins.size());
-		for (int i = 0; i < (int)bins.size(); ++i) {
-			root.add(i, bins[i]);
-		}
-		boxes.push_back(core::move(root));
-	}
-
-	while ((int)boxes.size() < maxColors) {
-		int best = -1;
-		uint64_t bestImp = 0;
-		for (int i = 0; i < (int)boxes.size(); ++i) {
-			if (!boxes[i].canSplit()) {
-				continue;
-			}
-			const uint64_t imp = boxes[i].importance();
-			if (best < 0 || imp > bestImp) {
-				bestImp = imp;
-				best = i;
-			}
-		}
-		if (best < 0) {
-			break;
-		}
-
-		Box src = core::move(boxes[best]);
-		boxes.erase(best);
-
-		int channel = 0;
-		int longest = src.rangeR();
-		if (src.rangeG() > longest) {
-			channel = 1;
-			longest = src.rangeG();
-		}
-		if (src.rangeB() > longest) {
-			channel = 2;
-		}
-
-		src.idx.sort([&](int ia, int ib) {
-			const Bin &a = bins[ia];
-			const Bin &b = bins[ib];
-			uint8_t va;
-			uint8_t vb;
-			if (channel == 0) {
-				va = a.avgR();
-				vb = b.avgR();
-			} else if (channel == 1) {
-				va = a.avgG();
-				vb = b.avgG();
-			} else {
-				va = a.avgB();
-				vb = b.avgB();
-			}
-			return va > vb;
-		});
-
-		auto channelVal = [&](int binIndex) -> uint8_t {
-			if (channel == 0) {
-				return bins[binIndex].avgR();
-			}
-			if (channel == 1) {
-				return bins[binIndex].avgG();
-			}
-			return bins[binIndex].avgB();
-		};
-
-		// Split at the largest gap, weighted so both sides keep votes.
-		// A population median can glue a small material to a large one.
-		int split = 1;
-		uint64_t bestScore = 0;
-		uint32_t acc = 0;
-		for (int i = 0; i < (int)src.idx.size() - 1; ++i) {
-			acc += bins[src.idx[i]].n;
-			const int gap = (int)channelVal(src.idx[i + 1]) - (int)channelVal(src.idx[i]);
-			if (gap <= 0) {
-				continue;
-			}
-			const uint32_t leftN = acc;
-			const uint32_t rightN = src.n - acc;
-			if (leftN == 0 || rightN == 0) {
-				continue;
-			}
-			const uint32_t smaller = leftN < rightN ? leftN : rightN;
-			const uint64_t score = (uint64_t)gap * (uint64_t)smaller;
-			if (score > bestScore) {
-				bestScore = score;
-				split = i + 1;
-			}
-		}
-		if (split <= 0) {
-			split = 1;
-		}
-		if (split >= (int)src.idx.size()) {
-			split = (int)src.idx.size() - 1;
-		}
-
-		Box left;
-		Box right;
-		left.idx.reserve(split);
-		right.idx.reserve((int)src.idx.size() - split);
-		for (int i = 0; i < split; ++i) {
-			left.add(src.idx[i], bins[src.idx[i]]);
-		}
-		for (int i = split; i < (int)src.idx.size(); ++i) {
-			right.add(src.idx[i], bins[src.idx[i]]);
-		}
-		if (left.n == 0 || right.n == 0) {
-			boxes.push_back(core::move(src));
-			break;
-		}
-		boxes.push_back(core::move(left));
-		boxes.push_back(core::move(right));
-	}
-
-	palette.setSize((int)boxes.size());
-	for (int i = 0; i < (int)boxes.size(); ++i) {
-		const Box &box = boxes[i];
-		int best = -1;
-		uint32_t bestN = 0;
-		for (int j = 0; j < (int)box.idx.size(); ++j) {
-			const Bin &bin = bins[box.idx[j]];
-			if (best < 0 || bin.n > bestN) {
-				best = box.idx[j];
-				bestN = bin.n;
-			}
-		}
-		if (best < 0 || bins[best].n == 0) {
-			palette.setColor(i, color::RGBA(0, 0, 0, 255));
-			continue;
-		}
-		palette.setColor(i, bins[best].color());
-	}
-	Log::info("Loaded %i unique colors from %i voxels and quantized to %i (weighted median-cut)", (int)bins.size(),
-			  (int)total, palette.colorCount());
-	palette.markDirty();
-	return palette;
-}
-#endif
 
 palette::ColorPalette toColorPalette(const palette::Palette &palette) {
 	palette::ColorPalette colorPalette;
