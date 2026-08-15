@@ -193,7 +193,8 @@ protected:
 	 * @param[in] fillHollow Fill the inner parts of a voxel volume
 	 * @param[out] node The node to create the volume in
 	 */
-	void voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &posMap, const MeshMaterialArray &meshMaterialArray, bool fillHollow) const;
+	void voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &posMap, const MeshMaterialArray &meshMaterialArray,
+					  bool fillHollow, bool reserveExactWhite = false) const;
 
 	/**
 	 * Occupancy (inside / surface band) then nearest-surface UV albedo

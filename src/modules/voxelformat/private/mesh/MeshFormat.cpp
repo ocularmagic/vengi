@@ -806,7 +806,8 @@ bool MeshFormat::calculateAABB(const MeshTriCollection &tris, glm::vec3 &mins, g
 	return true;
 }
 
-void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &posMap, const MeshMaterialArray &meshMaterialArray, bool fillHollow) const {
+void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &posMap, const MeshMaterialArray &meshMaterialArray,
+							  bool fillHollow, bool reserveExactWhite) const {
 	if (posMap.empty()) {
 		Log::debug("Empty volume - no positions given");
 		return;
@@ -837,7 +838,23 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 				colorMaterials.put(rgba, newMat);
 			}
 		}
-		const int targetColors = core::getVar(cfg::VoxformatTargetColors)->intVal();
+		int targetColors = core::getVar(cfg::VoxformatTargetColors)->intVal();
+		if (targetColors <= 0) {
+			targetColors = palette::PaletteMaxColors;
+		}
+		if (reserveExactWhite) {
+			const color::RGBA white(255, 255, 255, 255);
+			bool samplesHaveWhite = false;
+			for (int i = 0; i < (int)samples.size(); ++i) {
+				if (samples[i] == white) {
+					samplesHaveWhite = true;
+					break;
+				}
+			}
+			if (!samplesHaveWhite && targetColors > 1) {
+				--targetColors;
+			}
+		}
 		palette = palette::toPaletteWeighted(samples.data(), samples.size(), targetColors);
 		for (const auto &entry : colorMaterials) {
 			if (entry->value == nullptr) {
@@ -888,6 +905,17 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 		core_assert_msg_always(volume->setVoxel(idx, voxel), "Failed to set voxel at index %i (%s)", idx, volume->region().toString().c_str());
 	};
 	posMap.for_parallel(fn);
+	if (reserveExactWhite) {
+		const color::RGBA white(255, 255, 255, 255);
+		uint8_t whiteIdx = 0;
+		if (!palette.tryAdd(white, false, &whiteIdx, false)) {
+			if (palette.colorCount() < palette::PaletteMaxColors) {
+				whiteIdx = (uint8_t)palette.colorCount();
+				palette.setSize(palette.colorCount() + 1);
+				palette.setColor(whiteIdx, white);
+			}
+		}
+	}
 	if (palette.colorCount() == 1) {
 		color::RGBA c = palette.color(0);
 		if (c.a == 0) {
