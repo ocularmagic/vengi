@@ -4,6 +4,7 @@
 
 #include "voxedit-util/modifier/brush/ShapeBrush.h"
 #include "app/tests/AbstractTest.h"
+#include "command/Command.h"
 #include "scenegraph/SceneGraph.h"
 #include "voxedit-util/modifier/ModifierType.h"
 #include "voxedit-util/modifier/ModifierVolumeWrapper.h"
@@ -226,4 +227,21 @@ TEST_F(ShapeBrushTest, testTorus) {
 	brush.shutdown();
 }
 
-}; // namespace voxedit
+TEST_F(ShapeBrushTest, testStrokeCommandNames) {
+	ShapeBrush brush;
+	brush.construct();
+	ASSERT_TRUE(brush.init());
+	ASSERT_NE(nullptr, command::Command::getCommand("setshapebrushsingle"));
+	ASSERT_NE(nullptr, command::Command::getCommand("setshapebrushstroke"));
+	ASSERT_TRUE(command::Command::execute("setshapebrushsingle"));
+	EXPECT_TRUE(brush.strokeMode());
+	ASSERT_TRUE(command::Command::execute("setshapebrushaabb"));
+	EXPECT_TRUE(brush.boxMode());
+	ASSERT_TRUE(command::Command::execute("setshapebrushstroke"));
+	EXPECT_TRUE(brush.strokeMode());
+	ASSERT_TRUE(command::Command::execute("setshapebrushstrokenooverlap"));
+	EXPECT_TRUE(brush.strokeNoOverlap());
+	brush.shutdown();
+}
+
+} // namespace voxedit

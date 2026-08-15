@@ -120,8 +120,8 @@ bool Brush::active() const {
 }
 
 void Brush::construct() {
-	// mirroraxisshapebrush, setshapebrushcenter, setshapebrushstroke, setshapebrushbox
-	// mirroraxispaintbrush, setpaintbrushcenter, setpaintbrushstroke, setpaintbrushbox
+	// mirroraxisshapebrushx/y/z/none
+	// setshapebrushcenter, setshapebrushaabb, setshapebrushsingle, setshapebrushsinglemove
 
 	const core::String &cmdName = name().toLower() + "brush";
 	command::Command::registerCommand("mirroraxis" + cmdName + "x")
