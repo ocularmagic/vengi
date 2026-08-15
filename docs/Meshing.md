@@ -5,6 +5,7 @@ The Vengi voxel engine provides different meshing algorithms to convert voxel da
 There are two configuration variables for mesh modes:
 
 - `voxel_meshmode` - Used for rendering in the editor (excludes greedy texture, as it's not supported by the renderer)
+- `voxel_mergequads` - When using the cubic editor mesher, merge coplanar same-color faces (default on). Disable this for the Studio beveled-cube look
 - `voxformat_meshmode` - Used when exporting/saving mesh formats (supports all mesh types including greedy texture)
 
 > See [configuration](Configuration.md) for more details
@@ -23,6 +24,8 @@ Quick selection guide:
 **Mode:** `voxel_meshmode=0` / `voxformat_meshmode=0`
 
 The cubic surface mesher creates a mesh where each voxel appears as a perfect cube. This is the classic "Minecraft-style" look where voxels maintain their blocky appearance.
+
+Set `voxel_mergequads` to `false` to emit one quad per exposed voxel face. Combined with `r_studiobevel`, same-color neighbors still show a crease.
 
 ## Marching Cubes Mesher
 

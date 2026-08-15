@@ -4,6 +4,7 @@
 
 #include "../SceneSettingsPanel.h"
 #include "TestUtil.h"
+#include "core/ConfigVar.h"
 #include "voxedit-util/SceneManager.h"
 
 namespace voxedit {
@@ -43,6 +44,13 @@ void SceneSettingsPanel::registerUITests(ImGuiTestEngine *engine, const char *id
 		ctx->Yield();
 		IM_CHECK_EQ(_shadingMode->intVal(), (int)ShadingMode::Shadows);
 		IM_CHECK_EQ(_rendershadow->boolVal(), true);
+
+		// switch to studio
+		ctx->ComboClick("Shading Mode/Studio (Beveled cubes)");
+		ctx->Yield();
+		IM_CHECK_EQ(_shadingMode->intVal(), (int)ShadingMode::Studio);
+		IM_CHECK_EQ(_rendershadow->boolVal(), false);
+		IM_CHECK_EQ(core::getVar(cfg::RenderStudioBevel)->boolVal(), true);
 	};
 
 	IM_REGISTER_TEST(engine, testCategory(), "sun presets")->TestFunc = [=](ImGuiTestContext *ctx) {

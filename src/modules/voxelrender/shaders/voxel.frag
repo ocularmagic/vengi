@@ -35,12 +35,17 @@ vec4 calcColor(void) {
 			if ((v_flags & FLAGOUTLINEPULSE) != 0u) {
 				ocolor.rgb = mix(ocolor.rgb, u_selectiontint.rgb, u_selectiontint.a);
 				float pulse = 0.5 + 0.5 * sin(float(u_timemillis) * 0.005);
-				return outline(v_pos, ocolor, normal, pulse);
+				ocolor = outline(v_pos, ocolor, normal, pulse);
+			} else {
+				ocolor = outline(v_pos, ocolor, normal, 1.0);
 			}
-			return outline(v_pos, ocolor, normal, 1.0);
+		} else {
+			ocolor.rgb = mix(ocolor.rgb, u_selectiontint.rgb, u_selectiontint.a);
+			ocolor = outline(v_pos, ocolor, normal, 1.0);
 		}
-		ocolor.rgb = mix(ocolor.rgb, u_selectiontint.rgb, u_selectiontint.a);
-		return outline(v_pos, ocolor, normal, 1.0);
+	}
+	if (u_studiobevel != 0) {
+		ocolor = studioBevel(v_pos, ocolor, normal);
 	}
 	return ocolor;
 }

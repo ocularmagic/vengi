@@ -17,8 +17,11 @@ typedef core::SharedPtr<SceneManager> SceneManagerPtr;
 enum class ShadingMode : uint8_t {
 	Unlit = 0,	// Pure voxel colors, no lighting
 	Lit = 1,	// Ambient + diffuse lighting, no shadows
-	Shadows = 2 // Full lighting with shadows
+	Shadows = 2, // Full lighting with shadows
+	Studio = 3	// Soft high-ambient light plus voxel face bevels
 };
+
+void applyShadingMode(ShadingMode shadingMode);
 
 class SceneSettingsPanel : public ui::Panel {
 private:

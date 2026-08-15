@@ -289,6 +289,57 @@ TEST_F(SceneManagerTest, testSceneJobQueueCancelPending) {
 	EXPECT_EQ((voxel::Region(2, 2, 2, 3, 2, 2)), testVolume()->region());
 }
 
+TEST_F(SceneManagerTest, testStrokeUndoIsSingleStep) {
+	ASSERT_TRUE(_sceneMgr->newScene(true, "strokescene", voxel::Region{0, 8}));
+	Modifier &modifier = _sceneMgr->modifier();
+	modifier.setBrushType(BrushType::Shape);
+	modifier.shapeBrush().setStrokeMode();
+	modifier.setModifierType(ModifierType::Place);
+	modifier.setCursorVoxel(voxel::createVoxel(voxel::VoxelType::Generic, 1));
+
+	const glm::ivec3 p0(0, 0, 0);
+	const glm::ivec3 p1(1, 0, 0);
+	const glm::ivec3 p2(2, 0, 0);
+	modifier.setCursorPosition(p0, voxel::FaceNames::NegativeX);
+	ASSERT_TRUE(modifier.beginBrush());
+
+	auto strokeAt = [&](const glm::ivec3 &pos) {
+		modifier.setCursorPosition(pos, voxel::FaceNames::NegativeX);
+		scenegraph::SceneGraph &sceneGraph = _sceneMgr->sceneGraph();
+		scenegraph::SceneGraphNode *node = _sceneMgr->sceneGraphModelNode(sceneGraph.activeNode());
+		ASSERT_NE(nullptr, node);
+		ASSERT_TRUE(modifier.execute(sceneGraph, *node,
+									[&](const voxel::Region &region, ModifierType, SceneModifiedFlags flags) {
+										_sceneMgr->modified(node->uuid(), region, flags);
+									}));
+	};
+	strokeAt(p0);
+	strokeAt(p1);
+	strokeAt(p2);
+	modifier.endBrush();
+
+	const voxel::Region pending = modifier.shapeBrush().consumePendingUndoRegion();
+	ASSERT_TRUE(pending.isValid());
+	_sceneMgr->modified(_sceneMgr->sceneGraph().activeNodeUUID(), pending, SceneModifiedFlags::MarkUndo);
+
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p0).getMaterial()));
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p1).getMaterial()));
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p2).getMaterial()));
+
+	memento::MementoHandler &mementoHandler = _sceneMgr->mementoHandler();
+	ASSERT_TRUE(mementoHandler.canUndo());
+	ASSERT_TRUE(_sceneMgr->undo());
+	EXPECT_TRUE(voxel::isAir(testVolume()->voxel(p0).getMaterial()));
+	EXPECT_TRUE(voxel::isAir(testVolume()->voxel(p1).getMaterial()));
+	EXPECT_TRUE(voxel::isAir(testVolume()->voxel(p2).getMaterial()));
+	EXPECT_FALSE(mementoHandler.canUndo());
+	ASSERT_TRUE(mementoHandler.canRedo());
+	ASSERT_TRUE(_sceneMgr->redo());
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p0).getMaterial()));
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p1).getMaterial()));
+	EXPECT_TRUE(voxel::isBlocked(testVolume()->voxel(p2).getMaterial()));
+}
+
 TEST_F(SceneManagerTest, testUndoRedoModification) {
 	EXPECT_FALSE(_sceneMgr->dirty());
 	ASSERT_TRUE(testSetVoxel(testMins()));

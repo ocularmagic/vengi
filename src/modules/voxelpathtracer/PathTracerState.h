@@ -20,13 +20,29 @@ struct PathTracerState {
 	float aperture = 0.0f;
 	float sunIntensity = 1.0f;
 	float sunArea = 1.0f;
-	float sunElevation = yocto::pif / 4.0f;
-	float sunAzimuth = yocto::pif / 4.0f;
+	float sunElevation = 55.0f * yocto::pif / 180.0f;
+	float sunAzimuth = 135.0f * yocto::pif / 180.0f;
 	bool sunDisk = false;
+	bool skyEnvironment = false;
+	yocto::vec3f environmentColor = {0.91f, 0.91f, 0.92f};
 	float exposure = 0.0f;
 	bool filmic = false;
 
 	PathTracerState() : context(yocto::make_trace_context({})) {
+	}
+
+	void resetAppearance() {
+		params = yocto::trace_params();
+		aperture = 0.0f;
+		sunIntensity = 1.0f;
+		sunArea = 1.0f;
+		sunElevation = 55.0f * yocto::pif / 180.0f;
+		sunAzimuth = 135.0f * yocto::pif / 180.0f;
+		sunDisk = false;
+		skyEnvironment = false;
+		environmentColor = {0.91f, 0.91f, 0.92f};
+		exposure = 0.0f;
+		filmic = false;
 	}
 };
 

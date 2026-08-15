@@ -15,6 +15,7 @@ layout(std140, binding = 1) uniform u_frag {
 	int u_tonemapping;
 	int u_renderoutline;
 	int u_shadowmap;
+	int u_studiobevel;
 };
 
 layout(location = 0) $out vec4 o_color;
@@ -155,6 +156,25 @@ vec4 darken(vec4 color) {
 
 vec4 brighten(vec4 color) {
 	return clamp(vec4(color.rgb * vec3(1.5, 1.5, 1.5), color.a), 0.0, 1.0);
+}
+
+// Soft per-voxel face rim. Works on merged quads because v_pos is in voxel units
+// and fract() still hits integer seams. Unmerged cubes add a geometric crease on top.
+vec4 studioBevel(vec3 pos, vec4 color, vec3 normal) {
+	vec3 f = fract(pos);
+	float edge;
+	if (abs(normal.y) > 0.5) {
+		edge = min(min(f.x, 1.0 - f.x), min(f.z, 1.0 - f.z));
+	} else if (abs(normal.x) > 0.5) {
+		edge = min(min(f.y, 1.0 - f.y), min(f.z, 1.0 - f.z));
+	} else {
+		edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+	}
+	float rim = 1.0 - smoothstep(0.008, 0.028, edge);
+	vec3 edgeColor = color.rgb * 0.84;
+	vec3 faceColor = color.rgb * 1.02;
+	color.rgb = mix(faceColor, edgeColor, rim);
+	return color;
 }
 
 // pos is in object space

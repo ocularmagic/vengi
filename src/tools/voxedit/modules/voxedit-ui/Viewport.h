@@ -113,6 +113,7 @@ private:
 	core::VarPtr _clipping;
 	core::VarPtr _brushGizmo;
 	core::VarPtr _viewportHud;
+	core::VarPtr _viewportColor;
 
 	core::String _windowTitle;
 	core::String _screenshotCommand;
@@ -160,7 +161,7 @@ private:
 	void renderCursor();
 	void renderCursorDetails() const;
 	bool renderSlicer(const glm::ivec2 &contentSize);
-	void renderViewport();
+	void renderViewport(command::CommandExecutionListener *listener);
 	void toggleVideoRecording();
 	void menuBarPolygonModeOptions();
 	void menuBarCaptureOptions();

@@ -12,6 +12,8 @@ Known [issues](https://github.com/vengi-voxel/vengi/issues?q=is%3Aissue+is%3Aope
 
 General:
 
+   - Added Studio view mode, Studio color theme, and beveled cube viewport display (`r_studiobevel`, `voxel_mergequads`, `ve_viewportcolor`)
+   - Path tracer defaults to Studio wrap lighting (gray background) instead of a blue sun-sky; optional sky remains in Render settings
    - Added bone index save/load support to the `vengi` format (version 8)
    - Write Wavefront OBJ materials (one MTL entry per palette color with PBR properties)
    - Refactored parts of the io module and fixed memory leaks
@@ -77,7 +79,9 @@ VoxEdit:
    - Added support for browsing the voxbox store
    - Windows exe icons no longer get overwritten when several tools share one CMakeLists
    - Shape/paint AABB mode radios call the registered commands (Stroke works again)
+   - Stroke brush undo records the whole stroke as one step
    - Solid voxelize uses less memory for occupancy lists and the exterior flood
+   - Palette hue sort groups by color family then shade (light to dark)
 
 VoxConvert:
 

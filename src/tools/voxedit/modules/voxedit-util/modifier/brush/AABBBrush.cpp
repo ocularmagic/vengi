@@ -73,6 +73,7 @@ void AABBBrush::onSceneChange() {
 	_secondPosValid = false;
 	_boxMode = false;
 	_aabbFace = voxel::FaceNames::Max;
+	_pendingUndoRegion = voxel::Region::InvalidRegion;
 }
 
 void AABBBrush::reset() {
@@ -86,6 +87,7 @@ void AABBBrush::reset() {
 	_aabbFace = voxel::FaceNames::Max;
 	_aabbFirstPos = glm::ivec3(0);
 	_aabbSecondPos = glm::ivec3(0);
+	_pendingUndoRegion = voxel::Region::InvalidRegion;
 }
 
 glm::ivec3 AABBBrush::applyGridResolution(const glm::ivec3 &inPos, int resolution) const {
@@ -178,6 +180,16 @@ bool AABBBrush::execute(scenegraph::SceneGraph &sceneGraph, ModifierVolumeWrappe
 			generate(sceneGraph, wrapper, ctx, second);
 		}
 	}
+	if (anyStrokeMode()) {
+		const voxel::Region &dirty = wrapper.dirtyRegion();
+		if (dirty.isValid()) {
+			if (_pendingUndoRegion.isValid()) {
+				_pendingUndoRegion.accumulate(dirty);
+			} else {
+				_pendingUndoRegion = dirty;
+			}
+		}
+	}
 	return true;
 }
 
@@ -212,6 +224,7 @@ bool AABBBrush::beginBrush(const BrushContext &ctx) {
 	_secondPosValid = false;
 	_boxMode = wantBox();
 	_aabbFace = ctx.cursorFace;
+	_pendingUndoRegion = voxel::Region::InvalidRegion;
 	return true;
 }
 
@@ -261,10 +274,19 @@ bool AABBBrush::isMode(uint32_t mode) const {
 void AABBBrush::setMode(uint32_t mode) {
 	_mode = mode;
 	if (strokeNoOverlap()) {
-		_sceneModifiedFlags = SceneModifiedFlags::NoResetTrace;
+		_sceneModifiedFlags = SceneModifiedFlags::NoUndo & ~SceneModifiedFlags::ResetTrace;
+	} else if (strokeMode()) {
+		// Defer undo until mouse-up so the whole stroke is one history step.
+		_sceneModifiedFlags = SceneModifiedFlags::NoUndo;
 	} else {
 		_sceneModifiedFlags = SceneModifiedFlags::All;
 	}
+}
+
+voxel::Region AABBBrush::consumePendingUndoRegion() {
+	const voxel::Region region = _pendingUndoRegion;
+	_pendingUndoRegion = voxel::Region::InvalidRegion;
+	return region;
 }
 
 void AABBBrush::setRadius(int radius) {

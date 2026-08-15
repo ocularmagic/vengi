@@ -108,6 +108,8 @@ protected:
 
 	uint32_t _mode = BRUSH_MODE_BOX; ///< Current brush mode flags
 	int _radius = 0;				  ///< Radius for single mode (0 = single voxel)
+	// Union of dirty regions while the stroke button is held; committed on release.
+	voxel::Region _pendingUndoRegion = voxel::Region::InvalidRegion;
 
 	/**
 	 * The first corner position of the AABB, set by beginBrush()
@@ -299,6 +301,8 @@ public:
 	 * @return The current radius, or 0 if not in stroke mode
 	 */
 	int radius() const;
+
+	voxel::Region consumePendingUndoRegion() override;
 };
 
 inline int AABBBrush::radius() const {

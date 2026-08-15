@@ -113,6 +113,7 @@ private:
 	core::Queue<int> _pendingMeshes;
 	core::DynamicArray<bool> _pendingMeshDirty;
 	core::VarPtr _meshMode;
+	core::VarPtr _mergeQuads;
 	core::VarPtr _meshAlloc;
 	void ensureSize(int idx);
 	bool deleteMeshes(const glm::ivec3 &pos, int idx);

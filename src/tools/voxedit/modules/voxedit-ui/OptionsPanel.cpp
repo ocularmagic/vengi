@@ -7,6 +7,7 @@
 #include "core/Common.h"
 #include "voxedit-util/SceneManager.h"
 #include "MenuBar.h"
+#include "SceneSettingsPanel.h"
 #include "core/ConfigVar.h"
 #include "core/StringUtil.h"
 #include "core/Var.h"
@@ -67,10 +68,11 @@ bool OptionsPanel::categoryHasMatch(OptionCategory category) const {
 			   matchesVarFilter(cfg::VoxEditShowBones) || matchesVarFilter(cfg::VoxEditShowPlane) ||
 			   matchesVarFilter(cfg::VoxEditPlaneSize);
 	case OptionCategory::Rendering:
-		return matchesVarFilter(cfg::RenderOutline) || matchesVarFilter(cfg::RenderSelectionTint) ||
+		return matchesVarFilter(cfg::RenderOutline) || matchesVarFilter(cfg::RenderStudioBevel) ||
+			   matchesVarFilter(cfg::VoxelMergeQuads) || matchesVarFilter(cfg::RenderSelectionTint) ||
 			   matchesVarFilter(cfg::RenderNormals) || matchesVarFilter(cfg::RenderCheckerBoard) ||
-			   matchesVarFilter(cfg::VoxEditShadingMode) || matchesVarFilter(cfg::ClientBloom) ||
-			   matchesVarFilter(cfg::ClientBloomPasses) ||
+			   matchesVarFilter(cfg::VoxEditShadingMode) || matchesVarFilter(cfg::VoxEditViewportColor) ||
+			   matchesVarFilter(cfg::ClientBloom) || matchesVarFilter(cfg::ClientBloomPasses) ||
 			   matchesVarFilter(cfg::RenderToneMapping);
 	case OptionCategory::Renderer:
 		return matchesVarFilter(cfg::ClientShadowMapSize) || matchesVarFilter(cfg::ClientGamma) ||
@@ -242,6 +244,15 @@ void OptionsPanel::renderRendering() {
 	if (matchesVarFilter(cfg::RenderOutline)) {
 		ImGui::IconCheckboxVar(ICON_LC_BOX, cfg::RenderOutline);
 	}
+	if (matchesVarFilter(cfg::RenderStudioBevel)) {
+		ImGui::IconCheckboxVar(ICON_LC_BOXES, cfg::RenderStudioBevel);
+	}
+	if (matchesVarFilter(cfg::VoxelMergeQuads)) {
+		ImGui::IconCheckboxVar(ICON_LC_COMBINE, cfg::VoxelMergeQuads);
+	}
+	if (matchesVarFilter(cfg::VoxEditViewportColor)) {
+		ImGui::ColorEdit4Var(cfg::VoxEditViewportColor);
+	}
 	if (matchesVarFilter(cfg::RenderSelectionTint)) {
 		ImGui::ColorEdit4Var(cfg::RenderSelectionTint);
 	}
@@ -257,7 +268,7 @@ void OptionsPanel::renderRendering() {
 
 	if (matchesVarFilter(cfg::VoxEditShadingMode)) {
 		const core::VarPtr &shadingVar = core::getVar(cfg::VoxEditShadingMode);
-		const char *shadingModeLabels[] = {_("Unlit"), _("Lit"), _("Shadows")};
+		const char *shadingModeLabels[] = {_("Unlit"), _("Lit"), _("Shadows"), _("Studio")};
 		int currentShadingMode = shadingVar->intVal();
 		const char *currentLabel = (currentShadingMode >= 0 && currentShadingMode < (int)lengthof(shadingModeLabels))
 									   ? shadingModeLabels[currentShadingMode]
@@ -267,7 +278,7 @@ void OptionsPanel::renderRendering() {
 			for (int i = 0; i < (int)lengthof(shadingModeLabels); ++i) {
 				const bool isSelected = (currentShadingMode == i);
 				if (ImGui::Selectable(shadingModeLabels[i], isSelected)) {
-					shadingVar->setVal(i);
+					applyShadingMode((ShadingMode)i);
 				}
 				if (isSelected) {
 					ImGui::SetItemDefaultFocus();

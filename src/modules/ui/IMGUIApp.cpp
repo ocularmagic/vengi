@@ -191,7 +191,7 @@ app::AppState IMGUIApp::onConstruct() {
 	if (!isDarkMode()) {
 		uiStyleDefaultValue = ImGui::StyleLight;
 	}
-	const core::VarDef uIStyle(cfg::UIStyle, uiStyleDefaultValue, 0, (int)ImGui::MaxStyles - 1, N_("UI style"), N_("Change the ui colors - [0-3]"));
+	const core::VarDef uIStyle(cfg::UIStyle, uiStyleDefaultValue, 0, (int)ImGui::MaxStyles - 1, N_("UI style"), N_("Change the ui colors - [0-4]"));
 	_uistyle = core::Var::registerVar(uIStyle);
 	const core::VarDef uINotifyDismissMillis(cfg::UINotifyDismissMillis, 3000, N_("Notification timeout"), N_("Timeout for notifications in millis"));
 	core::Var::registerVar(uINotifyDismissMillis);
@@ -444,6 +444,9 @@ void IMGUIApp::setColorTheme() {
 	case ImGui::StyleClassic:
 		ImGui::StyleColorsClassic();
 		break;
+	case ImGui::StyleStudio:
+		ImGui::StyleColorsStudio();
+		break;
 	default:
 		_uistyle->setVal(ImGui::StyleCorporateGrey);
 		ImGui::StyleColorsCorporateGrey();
@@ -458,9 +461,11 @@ void IMGUIApp::setColorTheme() {
 	ImGui::StyleColorsNeoSequencer();
 	ImGui::StyleImGuizmo();
 
-	style.FrameRounding = 2.0f;
-	style.ChildRounding = 4.0f;
-	style.WindowRounding = 6.0f;
+	if (_uistyle->intVal() != ImGui::StyleStudio) {
+		style.FrameRounding = 2.0f;
+		style.ChildRounding = 4.0f;
+		style.WindowRounding = 6.0f;
+	}
 
 	const float mainScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
 	style.ScaleAllSizes(mainScale);
@@ -469,19 +474,20 @@ void IMGUIApp::setColorTheme() {
 
 const glm::vec4 &IMGUIApp::color(style::StyleColor color) {
 	const int style = _uistyle->intVal();
+	const bool lightLike = style == ImGui::StyleLight || style == ImGui::StyleStudio;
 	switch (color) {
 	case style::ColorAxisX:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::LightRed();
 		}
 		return color::DarkRed();
 	case style::ColorAxisY:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::LightGreen();
 		}
 		return color::DarkGreen();
 	case style::ColorAxisZ:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::LightBlue();
 		}
 		return color::DarkBlue();
@@ -491,6 +497,10 @@ const glm::vec4 &IMGUIApp::color(style::StyleColor color) {
 		return color::Gray();
 	case style::ColorSliceRegion:
 	case style::ColorGridBorder:
+		if (style == ImGui::StyleStudio) {
+			static const glm::vec4 studioGrid(0.72f, 0.72f, 0.74f, 1.0f);
+			return studioGrid;
+		}
 		if (style == ImGui::StyleLight) {
 			return color::DarkGray();
 		}
@@ -502,7 +512,7 @@ const glm::vec4 &IMGUIApp::color(style::StyleColor color) {
 		return c;
 	}
 	case style::ColorUVEditor: {
-		if (style == ImGui::StyleLight || style == ImGui::StyleClassic) {
+		if (lightLike || style == ImGui::StyleClassic) {
 			return color::DarkRed();
 		}
 		return color::LightRed();
@@ -510,31 +520,31 @@ const glm::vec4 &IMGUIApp::color(style::StyleColor color) {
 	case style::ColorGroupNode:
 		return color::LightYellow();
 	case style::ColorActiveNode:
-		if (style == ImGui::StyleLight || style == ImGui::StyleClassic) {
+		if (lightLike || style == ImGui::StyleClassic) {
 			return color::DarkGreen();
 		}
 		return color::White();
 	case style::ColorBone:
 		return color::LightGray();
 	case style::ColorActiveBrush:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::Green();
 		}
 		return color::DarkGreen();
 	case style::ColorChatSystem:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::DarkGray();
 		}
 		return color::Gray();
 	case style::ColorChatSender:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::DarkBlue();
 		}
 		return color::LightBlue();
 	case style::ColorWarningText:
 		return color::LightRed();
 	case style::ColorBrushGizmoLine:
-		if (style == ImGui::StyleLight) {
+		if (lightLike) {
 			return color::Orange();
 		}
 		return color::Yellow();

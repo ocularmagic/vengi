@@ -46,6 +46,7 @@ set(SRCS
 	brush/BrushPanelTransform.h brush/BrushPanelTransform.cpp
 	brush/BrushPanelSculpt.h brush/BrushPanelSculpt.cpp
 	ViewportHud.h ViewportHud.cpp
+	StudioHud.h StudioHud.cpp
 	StatusBar.h StatusBar.cpp
 	TipOfTheDay.h
 	ToolsPanel.h ToolsPanel.cpp

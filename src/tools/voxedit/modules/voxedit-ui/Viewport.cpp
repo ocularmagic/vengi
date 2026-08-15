@@ -159,6 +159,7 @@ bool Viewport::init() {
 	_clipping = core::getVar(cfg::GameModeClipping);
 	_brushGizmo = core::getVar(cfg::VoxEditBrushGizmo);
 	_viewportHud = core::getVar(cfg::VoxEditViewportHud);
+	_viewportColor = core::getVar(cfg::VoxEditViewportColor);
 	// Use the actual framebuffer pixel dimensions (not logical window size) to ensure
 	// crisp rendering on HiDPI displays
 	if (!_renderContext.init(_app->frameBufferDimension())) {
@@ -397,7 +398,7 @@ bool Viewport::renderSlicer(const glm::ivec2 &contentSize) {
 	return changed;
 }
 
-void Viewport::renderViewport() {
+void Viewport::renderViewport(command::CommandExecutionListener *listener) {
 	core_trace_scoped(Viewport);
 	glm::ivec2 contentSize = ImGui::GetContentRegionAvail();
 	ImVec2 cursorPos = ImGui::GetCursorPos();
@@ -697,7 +698,7 @@ void Viewport::update(double nowSeconds, command::CommandExecutionListener *list
 			_sceneMgr->setActiveCamera(&camera(), isFixedCamera());
 		}
 		renderMenuBar(listener);
-		renderViewport();
+		renderViewport(listener);
 		// Orbiting uses hover, not window focus (the scene tree often keeps
 		// focus). Persist the live view onto the selected camera node.
 		if (!appliedCameraNode && (_hovered || _focused || _sceneMgr->activeCamera() == &_camera)) {
@@ -1291,7 +1292,15 @@ bool Viewport::renderGizmo(video::Camera &camera, float headerSize, const ImVec2
 
 void Viewport::renderToFrameBuffer() {
 	core_trace_scoped(RenderFramebuffer);
-	video::clearColor(color::Clear());
+	glm::vec4 clearColor = color::Clear();
+	if (_viewportColor) {
+		float c[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+		_viewportColor->vec4Val(c);
+		if (c[3] > 0.0f) {
+			clearColor = glm::vec4(c[0], c[1], c[2], c[3]);
+		}
+	}
+	video::clearColor(clearColor);
 	_sceneMgr->render(_renderContext, _modifierRenderContext, camera());
 }
 

@@ -58,6 +58,8 @@ protected:
 		core::Var::registerVar(renderCullNodes);
 		const core::VarDef renderOutline(cfg::RenderOutline, false, "", "");
 		core::Var::registerVar(renderOutline);
+		const core::VarDef renderStudioBevel(cfg::RenderStudioBevel, false, "", "");
+		core::Var::registerVar(renderStudioBevel);
 		const core::VarDef renderSelectionTint(cfg::RenderSelectionTint, false, "", "");
 		core::Var::registerVar(renderSelectionTint);
 		const core::VarDef renderNormals(cfg::RenderNormals, false, "", "");

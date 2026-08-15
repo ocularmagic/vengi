@@ -6,7 +6,9 @@
 #include "app/App.h"
 #include "app/ForParallel.h"
 #include "app/I18NMarkers.h"
+#include "core/ConfigVar.h"
 #include "core/Log.h"
+#include "core/Var.h"
 #include "core/concurrent/Concurrency.h"
 #include "palette/NormalPalette.h"
 #include "voxel/MaterialColor.h"
@@ -39,6 +41,10 @@ int MeshState::maxSize() const {
 bool MeshState::init() {
 	_meshMode = core::getVar(cfg::VoxelMeshMode);
 	_meshMode->markClean();
+	_mergeQuads = core::getVar(cfg::VoxelMergeQuads);
+	if (_mergeQuads) {
+		_mergeQuads->markClean();
+	}
 	return true;
 }
 
@@ -53,6 +59,9 @@ void MeshState::construct() {
 										 (int)voxel::SurfaceExtractionType::Binary, N_("Mesh mode"),
 										 N_("0 = cubes, 1 = marching cubes, 2 = binary mesher"));
 	core::Var::registerVar(voxRenderMeshMode);
+	const core::VarDef voxelMergeQuads(cfg::VoxelMergeQuads, true, N_("Merge quads"),
+									   N_("Merge coplanar same-color faces for the cubic editor mesher"));
+	core::Var::registerVar(voxelMergeQuads);
 	const core::VarDef voxMeshAlloc(cfg::VoxelMeshAlloc, 0, 0, 1,
 									N_("Mesh allocation strategy"),
 									N_("0 = full pre-alloc (best for small models), 1 = small alloc (best for large models)"));
@@ -254,7 +263,8 @@ bool MeshState::runScheduledExtractions(size_t maxExtraction) {
 	Log::debug("running %i extractions in parallel", (int)maxExtraction);
 	voxel::SurfaceExtractionType type = (voxel::SurfaceExtractionType)_meshMode->intVal();
 	const bool meshAllocSmall = (MeshAllocStrategy)_meshAlloc->intVal() == MeshAllocStrategy::SmallGrow;
-	auto fn = [&regions, &results, this, type, meshAllocSmall] (size_t start, size_t end) {
+	const bool mergeQuads = _mergeQuads ? _mergeQuads->boolVal() : true;
+	auto fn = [&regions, &results, this, type, meshAllocSmall, mergeQuads] (size_t start, size_t end) {
 		for (size_t i = start; i < end; ++i) {
 			const ExtractRegion &extractRegion = regions[i];
 			const int idx = extractRegion.idx;
@@ -295,7 +305,8 @@ bool MeshState::runScheduledExtractions(size_t maxExtraction) {
 			const int meshVertices = meshAllocSmall ? SmallAllocVertices : FullAllocVertices;
 			const int meshIndices = meshAllocSmall ? SmallAllocIndices : FullAllocIndices;
 			voxel::ChunkMesh mesh(meshVertices, meshIndices, true);
-			voxel::SurfaceExtractionContext ctx = voxel::createContext(type, v, extractRegion.region, pal, mesh, mins);
+			voxel::SurfaceExtractionContext ctx =
+				voxel::createContext(type, v, extractRegion.region, pal, mesh, mins, mergeQuads);
 			voxel::extractSurface(ctx);
 			results[i] = {mins, idx, core::move(mesh)};
 		}
@@ -323,8 +334,12 @@ bool MeshState::runScheduledExtractions(size_t maxExtraction) {
 bool MeshState::update() {
 	core_trace_scoped(MeshStateUpdate);
 	bool triggerClear = false;
-	if (_meshMode->isDirty()) {
+	const bool mergeQuadsDirty = _mergeQuads && _mergeQuads->isDirty();
+	if (_meshMode->isDirty() || mergeQuadsDirty) {
 		_meshMode->markClean();
+		if (_mergeQuads) {
+			_mergeQuads->markClean();
+		}
 		clearPendingExtractions();
 
 		for (int i : _activeIndices) {
