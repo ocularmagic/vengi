@@ -161,6 +161,7 @@ set(TEST_SRCS
 	tests/SessionRecorderTest.cpp
 	tests/LUABrushTest.cpp
 	tests/VoxBoxApiTest.cpp
+	tests/StudioStyleTest.cpp
 )
 set(TEST_FILES
 	shared/font.ttf

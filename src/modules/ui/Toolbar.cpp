@@ -4,6 +4,7 @@
 
 #include "Toolbar.h"
 #include "IMGUIEx.h"
+#include "IMGUIStyle.h"
 #include "ScopedStyle.h"
 
 namespace ui {
@@ -43,10 +44,18 @@ void Toolbar::end() {
 }
 
 void Toolbar::applyIconStyle(ui::ScopedStyle &style) {
-	style.setFramePadding(ImVec2(1.0f, 1.0f));
+	const bool studio = ImGui::IsStudioStyle();
+	// Studio frames are rounded; 1px padding pinches the glyph against the curve.
+	if (studio) {
+		style.setFramePadding(ImVec2(5.0f, 5.0f));
+		style.setItemSpacing(ImVec2(4.0f, 4.0f));
+		style.setFrameRounding(4.0f);
+	} else {
+		style.setFramePadding(ImVec2(1.0f, 1.0f));
+		style.setItemSpacing(ImVec2(1.0f, 1.0f));
+		ImGui::AlignTextToFramePadding();
+	}
 	style.setButtonTextAlign(ImVec2(0.5f, 0.5f));
-	style.setItemSpacing(ImVec2(1.0f, 1.0f));
-	ImGui::AlignTextToFramePadding();
 }
 
 void Toolbar::applyDisabledStyle(ui::ScopedStyle &style) {

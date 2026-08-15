@@ -8,6 +8,7 @@
 #include "render/ShapeRenderer.h"
 #include "video/ShapeBuilder.h"
 #include "math/AABB.h"
+#include <glm/vec4.hpp>
 
 namespace video {
 class Video;
@@ -46,6 +47,9 @@ protected:
 	bool _renderPlane;
 	bool _dirty = false;
 	bool _dirtyPlane = true;
+	glm::vec4 _planeColorMinor{0.75f, 0.75f, 0.75f, 1.0f};
+	glm::vec4 _planeColorMajor{0.50f, 0.50f, 0.50f, 1.0f};
+	glm::vec4 _planeColorAxis{0.33f, 0.33f, 0.33f, 1.0f};
 public:
 	GridRenderer(bool renderAABB = false, bool renderGrid = true, bool renderPlane = false);
 
@@ -78,6 +82,7 @@ public:
 	void update(const math::AABB<float> &region);
 	void clear();
 	void setColor(const glm::vec4 &color);
+	void setPlaneColors(const glm::vec4 &minor, const glm::vec4 &major, const glm::vec4 &axis);
 
 	/**
 	 * @sa shutdown()
