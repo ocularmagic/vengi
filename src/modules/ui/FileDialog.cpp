@@ -120,6 +120,14 @@ static core::String assemblePath(const core::String &dir, const io::FilesystemEn
 	return core::string::path(dir, ent.name);
 }
 
+core::String FileDialog::dateColumnText(const io::FilesystemEntry &entry) {
+	// ".." is a navigation row, not a real directory listing.
+	if (entry.name == "..") {
+		return core::String();
+	}
+	return core::TimeProvider::toString(entry.mtime);
+}
+
 void FileDialog::applyFilter(video::OpenFileMode type) {
 	_filteredEntities.clear();
 	_filteredEntities.reserve(_entities.size() + 1);
@@ -549,7 +557,7 @@ bool FileDialog::entitiesPanel(video::OpenFileMode type, int height, float reser
 					}
 				}
 				ImGui::TableNextColumn();
-				const core::String &lastModified = core::TimeProvider::toString(entry.mtime);
+				const core::String &lastModified = dateColumnText(entry);
 				ImGui::TextUnformatted(lastModified.c_str());
 			}
 		}

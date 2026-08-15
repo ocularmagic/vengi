@@ -2,7 +2,7 @@
 
 This is **not** the official vengi project and it is **not** my project.
 
-It is a personal fork of [vengi-voxel/vengi](https://github.com/vengi-voxel/vengi) with a few changes I made for my own use (mesh import colors and lighting, cube-face viewport lighting, top-down PNG slices with a white interior liner). I am not offering support, releases, or documentation for this fork. I will not take bug reports, feature requests, or pull requests here.
+It is a personal fork of [vengi-voxel/vengi](https://github.com/vengi-voxel/vengi) with a few changes I made for my own use (mesh import colors and lighting, cube-face viewport lighting, top-down PNG slices with a white interior liner, Windows file dialog dates). I am not offering support, releases, or documentation for this fork. I will not take bug reports, feature requests, or pull requests here.
 
 If you want vengi, use the [upstream repository](https://github.com/vengi-voxel/vengi), its [releases](https://github.com/vengi-voxel/vengi/releases/latest), [docs](https://vengi-voxel.github.io/vengi/), and [discord](https://vengi-voxel.de/discord).
 

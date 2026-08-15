@@ -150,6 +150,7 @@ set(TEST_SRCS
 	tests/StringTest.cpp
 	tests/StringUtilTest.cpp
 	tests/ThreadPoolTest.cpp
+	tests/TimeProviderTest.cpp
 	tests/TokenizerTest.cpp
 	tests/TupleTest.cpp
 	tests/UnicodeTest.cpp
