@@ -444,10 +444,11 @@ void SceneGraphPanel::update(video::Camera& camera, const char *id, ModelNodeSet
 									  ImGuiTableColumnFlags_NoReorder | ImGuiTableColumnFlags_NoHide;
 
 			ImGui::TableSetupScrollFreeze(0, 1);
+			const float checkColWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.x * 2.0f;
 			// TODO: UI: this space is here to align the icon a little bit - maybe there is a better way to do this
-			ImGui::TableSetupColumn(" " ICON_LC_EYE "##visiblenode", colFlags);
-			ImGui::TableSetupColumn(" " ICON_LC_LOCK "##lockednode", colFlags);
-			ImGui::TableSetupColumn("##nodecolor", colFlags);
+			ImGui::TableSetupColumn(" " ICON_LC_EYE "##visiblenode", colFlags, checkColWidth);
+			ImGui::TableSetupColumn(" " ICON_LC_LOCK "##lockednode", colFlags, checkColWidth);
+			ImGui::TableSetupColumn("##nodecolor", colFlags, checkColWidth);
 			ImGui::TableSetupColumn(_("Name"), ImGuiTableColumnFlags_WidthStretch);
 			ImGui::TableSetupColumn("##nodedelete", colFlags);
 			ImGui::TableHeadersRow();

@@ -287,6 +287,8 @@ void ModifierRenderer::update(const ModifierRendererContext &ctx) {
 	_gridRenderer.setPlaneGridSize(_planeSize->intVal());
 	_gridRenderer.setRenderPlane(_showPlane->boolVal());
 	_gridRenderer.setColor(style::color(style::ColorGridBorder));
+	_gridRenderer.setPlaneColors(style::color(style::ColorGridPlane), style::color(style::ColorGridPlaneMajor),
+								style::color(style::ColorGridPlaneAxis));
 	if (_activeRegion.isValid()) {
 		_gridRenderer.update(scenegraph::toAABB(_activeRegion));
 	}

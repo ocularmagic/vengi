@@ -264,8 +264,10 @@ void IMGUIApp::loadFonts() {
 
 	ImFontConfig fontIconCfg;
 	fontIconCfg.MergeMode = true;
+	// Lucide glyphs sit high in the em-box; shift them down so they look
+	// centered in rounded toolbar buttons and next to checkbox labels.
+	fontIconCfg.GlyphOffset = ImVec2(0.0f, 2.0f);
 	// fontIconCfg.PixelSnapH = true;
-	// fontIconCfg.GlyphOffset = {0.0f, 1.0f * fontScale};
 	// fontIconCfg.GlyphMinAdvanceX = fontScaledSize;
 	// fontIconCfg.GlyphMaxAdvanceX = fontScaledSize;
 	// fontIconCfg.SizePixels = fontScaledSize;
@@ -498,13 +500,31 @@ const glm::vec4 &IMGUIApp::color(style::StyleColor color) {
 	case style::ColorSliceRegion:
 	case style::ColorGridBorder:
 		if (style == ImGui::StyleStudio) {
-			static const glm::vec4 studioGrid(0.72f, 0.72f, 0.74f, 1.0f);
+			static const glm::vec4 studioGrid(0.45f, 0.45f, 0.48f, 1.0f);
 			return studioGrid;
 		}
 		if (style == ImGui::StyleLight) {
 			return color::DarkGray();
 		}
 		return color::White();
+	case style::ColorGridPlane:
+		if (lightLike) {
+			static const glm::vec4 studioPlane(0.52f, 0.52f, 0.55f, 1.0f);
+			return studioPlane;
+		}
+		return color::LightGray();
+	case style::ColorGridPlaneMajor:
+		if (lightLike) {
+			static const glm::vec4 studioPlaneMajor(0.36f, 0.36f, 0.39f, 1.0f);
+			return studioPlaneMajor;
+		}
+		return color::Gray();
+	case style::ColorGridPlaneAxis:
+		if (lightLike) {
+			static const glm::vec4 studioPlaneAxis(0.20f, 0.20f, 0.23f, 1.0f);
+			return studioPlaneAxis;
+		}
+		return color::DarkGray();
 	case style::ColorReferenceNode:
 		return color::LightGreen();
 	case style::ColorHighlightArea: {

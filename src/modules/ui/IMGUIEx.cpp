@@ -4,6 +4,7 @@
 
 #include "IMGUIEx.h"
 #include "IMGUIApp.h"
+#include "IMGUIStyle.h"
 #include "IconsLucide.h"
 #include "ScopedID.h"
 #include "ScopedStyle.h"
@@ -534,7 +535,16 @@ bool InputVarInt(const char *varName, int step, int step_fast, ImGuiInputTextFla
 	return InputVarInt(var, step, step_fast, extra_flags);
 }
 
+static void applyStudioCheckboxRounding(ui::ScopedStyle &style) {
+	if (IsStudioStyle()) {
+		// Keep the box squarer than generic frames so the checkmark sits in the middle.
+		style.setFrameRounding(3.0f);
+	}
+}
+
 bool IconCheckboxVar(const char *icon, const core::VarPtr &var) {
+	ui::ScopedStyle studioCheckbox;
+	applyStudioCheckboxRounding(studioCheckbox);
 	const core::String label = _priv::varLabel(var);
 	char labelWithIcon[256];
 	_priv::getId(icon, label.c_str(), labelWithIcon, sizeof(labelWithIcon));
@@ -549,6 +559,8 @@ bool IconCheckboxVar(const char *icon, const core::VarPtr &var) {
 }
 
 bool CheckboxVar(const core::VarPtr &var) {
+	ui::ScopedStyle studioCheckbox;
+	applyStudioCheckboxRounding(studioCheckbox);
 	const core::String label = _priv::varLabel(var);
 	bool val = var->boolVal();
 	if (Checkbox(label.c_str(), &val)) {
@@ -569,6 +581,8 @@ bool CheckboxVar(const char *varName) {
 }
 
 bool IconCheckboxFlags(const char *icon, const char *label, int *flags, int flags_value) {
+	ui::ScopedStyle studioCheckbox;
+	applyStudioCheckboxRounding(studioCheckbox);
 	char labelWithIcon[256];
 	_priv::getId(icon, label, labelWithIcon, sizeof(labelWithIcon));
 	return CheckboxFlags(labelWithIcon, flags, flags_value);
@@ -1067,19 +1081,30 @@ void IconDialog(const char *icon, const char *text, bool wrap) {
 }
 
 bool IconCheckbox(const char *icon, const char *label, bool *v) {
+	ui::ScopedStyle studioCheckbox;
+	applyStudioCheckboxRounding(studioCheckbox);
 	char labelWithIcon[256];
 	_priv::getId(icon, label, labelWithIcon, sizeof(labelWithIcon));
 	return ImGui::Checkbox(labelWithIcon, v);
+}
+
+bool BeginIconMenu(const char *icon, const char *label, bool enabled) {
+	const bool studio = IsStudioStyle();
+	if (studio) {
+		const float dpi = GetStyle().FontScaleDpi;
+		PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24.0f * dpi, 14.0f * dpi));
+	}
+	const bool open = BeginMenuEx(label, icon, enabled);
+	if (studio) {
+		PopStyleVar();
+	}
+	return open;
 }
 
 bool BeginIconCombo(const char *icon, const char *label, const char *preview_value, ImGuiComboFlags flags) {
 	char labelWithIcon[256];
 	_priv::getId(icon, label, labelWithIcon, sizeof(labelWithIcon));
 	return ImGui::BeginCombo(labelWithIcon, preview_value, flags);
-}
-
-bool BeginIconMenu(const char *icon, const char *label, bool enabled) {
-	return BeginMenuEx(label, icon, enabled);
 }
 
 bool IconMenuItem(const char *icon, const char *label, const char *shortcut, bool selected, bool enabled) {

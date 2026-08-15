@@ -16,7 +16,8 @@
 namespace render {
 
 GridRenderer::GridRenderer(bool renderAABB, bool renderGrid, bool renderPlane)
-	: _renderAABB(renderAABB), _renderGrid(renderGrid), _renderPlane(renderPlane) {
+	: _renderAABB(renderAABB), _renderGrid(renderGrid), _renderPlane(renderPlane),
+	  _planeColorMinor(color::LightGray()), _planeColorMajor(color::Gray()), _planeColorAxis(color::DarkGray()) {
 }
 
 bool GridRenderer::init() {
@@ -51,6 +52,16 @@ void GridRenderer::setColor(const glm::vec4 &color) {
 	}
 }
 
+void GridRenderer::setPlaneColors(const glm::vec4 &minor, const glm::vec4 &major, const glm::vec4 &axis) {
+	if (_planeColorMinor == minor && _planeColorMajor == major && _planeColorAxis == axis) {
+		return;
+	}
+	_planeColorMinor = minor;
+	_planeColorMajor = major;
+	_planeColorAxis = axis;
+	_dirtyPlane = true;
+}
+
 void GridRenderer::createForwardArrow(const math::AABB<float> &aabb) {
 	if (!aabb.isValid() || aabb.isEmpty()) {
 		return;
@@ -75,11 +86,11 @@ void GridRenderer::createPlane() {
 	_shapeBuilder.clear();
 	for (int i = -_planeGridSize; i <= _planeGridSize; ++i) {
 		if (glm::abs(i) % 100 == 0) {
-			_shapeBuilder.setColor(color::DarkGray());
+			_shapeBuilder.setColor(_planeColorAxis);
 		} else if (glm::abs(i) % 10 == 0) {
-			_shapeBuilder.setColor(color::Gray());
+			_shapeBuilder.setColor(_planeColorMajor);
 		} else {
-			_shapeBuilder.setColor(color::LightGray());
+			_shapeBuilder.setColor(_planeColorMinor);
 		}
 		for (int dir = 0; dir < 2; dir++) {
 			glm::vec3 start(dir ? -_planeGridSize : i, 0.f, dir ? i : -_planeGridSize);

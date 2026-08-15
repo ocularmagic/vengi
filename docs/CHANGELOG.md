@@ -84,6 +84,8 @@ VoxEdit:
    - Stroke brush undo records the whole stroke as one step
    - Solid voxelize uses less memory for occupancy lists and the exterior flood
    - Palette hue sort groups by color family then shade (light to dark)
+   - Studio theme: darker grid/plane lines and form controls so they stay visible on the light canvas
+   - Studio theme: more padding and milder frame rounding so checkbox/icon glyphs sit in the rounded frames
 
 VoxConvert:
 

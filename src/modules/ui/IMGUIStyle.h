@@ -29,4 +29,6 @@ void StyleColorsStudio();
 void StyleColorsNeoSequencer();
 void StyleImGuizmo();
 
+bool IsStudioStyle();
+
 }
