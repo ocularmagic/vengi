@@ -97,6 +97,21 @@ void FileDialog::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		io::Filesystem::sysRemoveDir(testDir);
 	};
 	t->TeardownFunc = closeFileDialog;
+
+	t = IM_REGISTER_TEST(engine, testCategory(), "parent dir has no date");
+	t->TestFunc = [](ImGuiTestContext *) {
+		io::FilesystemEntry parent;
+		parent.name = "..";
+		parent.type = io::FilesystemEntry::Type::dir;
+		parent.mtime = 0u;
+		IM_CHECK(FileDialog::dateColumnText(parent).empty());
+
+		io::FilesystemEntry file;
+		file.name = "foo.glb";
+		file.type = io::FilesystemEntry::Type::file;
+		file.mtime = 1609459200000ull;
+		IM_CHECK_STR_EQ(FileDialog::dateColumnText(file).c_str(), "01-01-2021 00-00-00");
+	};
 }
 
 } // namespace ui

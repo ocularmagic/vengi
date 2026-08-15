@@ -30,6 +30,8 @@ General:
    - Improved sandbox `vmx` support
    - Fixed invisible faces in some situations with the cube mesher
    - Fixed UTF8 issues with the tokenizer (visible in the file dialog bread crump menu)
+   - Fixed file dialog dates showing 1970 on Windows
+   - Hide the date on the file dialog parent ".." navigation row
    - Heavily reduced memory consumption for mesh format loading (voxelization)
    - Replaced `tinygltf` with `cgltf` for loading and writing `gltf` and `glb` files
    - Fixed `gltf` animation export to use TRS instead of matrix (spec-compliant)

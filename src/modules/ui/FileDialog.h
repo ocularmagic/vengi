@@ -89,6 +89,7 @@ private:
 								const io::FormatDescription **formatDesc);
 
 	void filter(video::OpenFileMode type);
+	static core::String dateColumnText(const io::FilesystemEntry &entry);
 	/**
 	 * @return @c true if a file was double clicked
 	 * @param reservedRight Width reserved to the right for an optional SameLine panel (e.g. model preview)

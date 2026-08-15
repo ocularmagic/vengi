@@ -6,6 +6,7 @@
 
 #include "core/SharedPtr.h"
 #include "core/String.h"
+#include <stdint.h>
 
 namespace core {
 
@@ -42,7 +43,7 @@ public:
 	}
 
 	double nowSeconds() const;
-	static core::String toString(unsigned long millis, const char *format = "%d-%m-%Y %H-%M-%S");
+	static core::String toString(uint64_t millis, const char *format = "%d-%m-%Y %H-%M-%S");
 
 	static uint64_t systemMillis();
 	static uint64_t highResTime();

@@ -49,8 +49,8 @@ uint64_t TimeProvider::highResTime() {
 	return SDL_GetPerformanceCounter();
 }
 
-core::String TimeProvider::toString(unsigned long millis, const char *format) {
-	time_t t(millis / 1000UL);
+core::String TimeProvider::toString(uint64_t millis, const char *format) {
+	time_t t((time_t)(millis / 1000ull));
 	tm tm = *gmtime(&t);
 	std::stringstream ss;
 	ss << std::put_time(&tm, format);
