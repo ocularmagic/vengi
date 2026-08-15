@@ -40,6 +40,32 @@ void AABBBrush::construct() {
 		.setHandler([this](const command::CommandArgs &args) {
 			setStrokeNoOverlap();
 		}).setHelp(_("Like stroke mode, but do not replace the same voxel twice"));
+
+	// Older UI/keybinding names
+	command::Command::registerCommand("set" + cmdName + "box")
+		.setHandler([this](const command::CommandArgs &args) {
+			setBoxMode();
+		}).setHelp(_("Click and drag to define a box of voxels"));
+	command::Command::registerCommand("set" + cmdName + "stroke")
+		.setHandler([this](const command::CommandArgs &args) {
+			setStrokeMode();
+		}).setHelp(_("Place voxels along the cursor while the action button is held"));
+	command::Command::registerCommand("set" + cmdName + "strokenooverlap")
+		.setHandler([this](const command::CommandArgs &args) {
+			setStrokeNoOverlap();
+		}).setHelp(_("Like stroke mode, but do not replace the same voxel twice"));
+}
+
+void AABBBrush::shutdown() {
+	const core::String &cmdName = name().toLower() + "brush";
+	command::Command::unregisterCommand("set" + cmdName + "center");
+	command::Command::unregisterCommand("set" + cmdName + "aabb");
+	command::Command::unregisterCommand("set" + cmdName + "single");
+	command::Command::unregisterCommand("set" + cmdName + "singlemove");
+	command::Command::unregisterCommand("set" + cmdName + "box");
+	command::Command::unregisterCommand("set" + cmdName + "stroke");
+	command::Command::unregisterCommand("set" + cmdName + "strokenooverlap");
+	Super::shutdown();
 }
 
 void AABBBrush::onSceneChange() {

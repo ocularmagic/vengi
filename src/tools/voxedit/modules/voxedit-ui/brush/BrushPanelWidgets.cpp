@@ -51,15 +51,15 @@ void aabbBrushOptions(command::CommandExecutionListener &listener, AABBBrush &br
 	ImGui::Separator();
 
 	const bool box = brush.boxMode();
-	core::String toggleBoxCmd = "set" + brush.name().toLower() + "brushbox";
+	core::String toggleBoxCmd = "set" + brush.name().toLower() + "brushaabb";
 	ImGui::CommandRadioButton(_("Box"), toggleBoxCmd, box, &listener);
 
 	const bool stroke = brush.strokeMode();
-	core::String toggleStrokeCmd = "set" + brush.name().toLower() + "brushstroke";
+	core::String toggleStrokeCmd = "set" + brush.name().toLower() + "brushsingle";
 	ImGui::CommandRadioButton(_("Stroke"), toggleStrokeCmd, stroke, &listener);
 
 	const bool strokeNoOverlap = brush.strokeNoOverlap();
-	core::String toggleStrokeNoOverlapCmd = "set" + brush.name().toLower() + "brushstrokenooverlap";
+	core::String toggleStrokeNoOverlapCmd = "set" + brush.name().toLower() + "brushsinglemove";
 	ImGui::CommandRadioButton(_("No overlap"), toggleStrokeNoOverlapCmd, strokeNoOverlap, &listener);
 
 	const bool center = brush.centerMode();
