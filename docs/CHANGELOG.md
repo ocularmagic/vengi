@@ -46,6 +46,7 @@ General:
    - Mesh voxel palettes build hue-proportional ramps (default 256) and remap voxels with HSB distance
    - Mesh palette slots use the most common color in each cluster, not the average
    - Solid interiors are white and do not vote on the palette
+   - Solid import always reserves an exact-white palette slot for interiors
    - Mesh voxelize no longer stamps triangle normals onto cubes
    - Cubic viewport lighting uses the visible cube face so `.vengi` matches `.vox` display
    - PNG plane slices are top-to-bottom (Y); each image is an XZ cut

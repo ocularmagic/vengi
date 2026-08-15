@@ -289,25 +289,26 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 
 	Log::info("Solid voxelize: %i colored surface voxels, %i interior voxels", (int)posMap.size(),
 			  (int)interiors.size());
-	voxelizeTris(node, posMap, meshMaterialArray, false);
+	voxelizeTris(node, posMap, meshMaterialArray, false, true);
 
 	if (interiors.empty()) {
 		return;
 	}
 	palette::Palette pal = node.palette();
-	uint8_t whiteIdx = 0;
 	const color::RGBA white(255, 255, 255, 255);
-	if (!pal.tryAdd(white, false, &whiteIdx, false)) {
+	uint8_t whiteIdx = 0;
+	// tryAdd returns false if the color is already present; index is still set.
+	pal.tryAdd(white, false, &whiteIdx, false);
+	if (pal.color(whiteIdx) != white) {
 		if (pal.colorCount() < palette::PaletteMaxColors) {
 			whiteIdx = (uint8_t)pal.colorCount();
 			pal.setSize(pal.colorCount() + 1);
 			pal.setColor(whiteIdx, white);
-		} else if (pal.colorCount() <= 0 || pal.color(whiteIdx) != white) {
-			const int idx = pal.getClosestMatch(white);
-			if (idx >= 0) {
-				whiteIdx = (uint8_t)idx;
-			}
 		}
+	}
+	if (pal.color(whiteIdx) != white) {
+		Log::error("Solid voxelize: failed to reserve exact white for interiors");
+		return;
 	}
 	node.setPalette(pal);
 	voxel::RawVolume *volume = node.volume();

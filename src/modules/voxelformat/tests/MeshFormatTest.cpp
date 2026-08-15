@@ -339,7 +339,15 @@ TEST_F(MeshFormatTest, testSolidFillsInteriorWithSurfaceColor) {
 		},
 		voxelutil::VisitSolid());
 	EXPECT_EQ(0, withNormal) << "Mesh voxelize must not stamp triangle normals onto cubes";
-	EXPECT_COLOR_NEAR(color::RGBA(255, 255, 255, 255), pal.color(centerVoxel.getColor()), 0.05f);
+	EXPECT_EQ(color::RGBA(255, 255, 255, 255), pal.color(centerVoxel.getColor()));
+	bool hasExactWhite = false;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		if (pal.color(i) == color::RGBA(255, 255, 255, 255)) {
+			hasExactWhite = true;
+			break;
+		}
+	}
+	EXPECT_TRUE(hasExactWhite) << "Solid import must keep an exact white palette slot for interiors";
 	EXPECT_COLOR_NEAR(red, pal.color(v->voxel(v->region().getLowerX(), v->region().getCenter().y,
 											 v->region().getCenter().z)
 										.getColor()),
