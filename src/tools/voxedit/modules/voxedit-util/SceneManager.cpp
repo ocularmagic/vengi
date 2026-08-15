@@ -3689,8 +3689,11 @@ void SceneManager::construct() {
 	core::Var::registerVar(voxEditShowBones);
 	const core::VarDef voxEditRendershadow(cfg::VoxEditRendershadow, false, N_("Render shadows"), N_("Render with shadows - make sure to set the scene lighting up properly"));
 	core::Var::registerVar(voxEditRendershadow);
-	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 2, N_("Shading mode"), N_("Shading mode: 0=Unlit (pure colors), 1=Lit (no shadows), 2=Shadows"));
+	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 3, N_("Shading mode"), N_("Shading mode: 0=Unlit (pure colors), 1=Lit (no shadows), 2=Shadows, 3=Studio"));
 	core::Var::registerVar(voxEditShadingMode);
+	const core::VarDef voxEditViewportColor(cfg::VoxEditViewportColor, "0 0 0 0", N_("Viewport color"),
+										   N_("Edit viewport clear color as r g b a. Alpha 0 keeps the UI background"));
+	core::Var::registerVar(voxEditViewportColor);
 	const core::VarDef voxEditAnimationSpeed(cfg::VoxEditAnimationSpeed, 100, N_("Model animation speed"), N_("Millisecond delay between frames hide/unhide when using the scene graph panel play button to animate the models in the scene"));
 	core::Var::registerVar(voxEditAnimationSpeed);
 	const core::VarDef voxEditAutoNormalMode(cfg::VoxEditAutoNormalMode, 0, 0, 2, N_("Auto normal mode"), "Flat, Smooth, Smoother", core::CV_NOPERSIST);

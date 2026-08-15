@@ -77,6 +77,7 @@ protected:
 	core::VarPtr _debugCascade;
 	core::VarPtr _tonemapping;
 	core::VarPtr _renderOutline;
+	core::VarPtr _studioBevel;
 	core::VarPtr _renderNormals;
 
 	core::TimeProviderPtr _timeProvider;

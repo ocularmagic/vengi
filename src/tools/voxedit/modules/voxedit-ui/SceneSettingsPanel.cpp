@@ -8,6 +8,8 @@
 #include "ui/ScopedID.h"
 #include "ui/ScopedPanel.h"
 #include "ui/ScopedStyle.h"
+#include "core/ConfigVar.h"
+#include "core/Var.h"
 #include "voxedit-util/Config.h"
 #include "voxedit-util/SceneManager.h"
 
@@ -15,6 +17,83 @@ namespace voxedit {
 
 SceneSettingsPanel::SceneSettingsPanel(ui::IMGUIApp *app, const SceneManagerPtr &sceneMgr)
 	: Super(app, "scenesettings"), _sceneMgr(sceneMgr) {
+}
+
+void applyShadingMode(ShadingMode shadingMode) {
+	core::VarPtr rendershadow = core::getVar(cfg::VoxEditRendershadow);
+	core::VarPtr ambientColor = core::getVar(cfg::VoxEditAmbientColor);
+	core::VarPtr diffuseColor = core::getVar(cfg::VoxEditDiffuseColor);
+	core::VarPtr sunAngle = core::getVar(cfg::VoxEditSunAngle);
+	core::VarPtr studioBevel = core::getVar(cfg::RenderStudioBevel);
+	core::VarPtr shadingVar = core::getVar(cfg::VoxEditShadingMode);
+	if (shadingVar) {
+		shadingVar->setVal((int)shadingMode);
+	}
+
+	switch (shadingMode) {
+	case ShadingMode::Unlit:
+		if (rendershadow) {
+			rendershadow->setVal(false);
+		}
+		if (ambientColor) {
+			ambientColor->setVal("1.0 1.0 1.0");
+		}
+		if (diffuseColor) {
+			diffuseColor->setVal("0.0 0.0 0.0");
+		}
+		if (studioBevel) {
+			studioBevel->setVal(false);
+		}
+		break;
+	case ShadingMode::Lit:
+		if (rendershadow) {
+			rendershadow->setVal(false);
+		}
+		if (ambientColor) {
+			ambientColor->setVal("0.3 0.3 0.3");
+		}
+		if (diffuseColor) {
+			diffuseColor->setVal("0.7 0.7 0.7");
+		}
+		if (studioBevel) {
+			studioBevel->setVal(false);
+		}
+		break;
+	case ShadingMode::Shadows:
+		if (rendershadow) {
+			rendershadow->setVal(true);
+		}
+		if (ambientColor) {
+			ambientColor->setVal("0.3 0.3 0.3");
+		}
+		if (diffuseColor) {
+			diffuseColor->setVal("0.7 0.7 0.7");
+		}
+		if (sunAngle) {
+			sunAngle->setVal("45.0 135.0 0.0");
+		}
+		if (studioBevel) {
+			studioBevel->setVal(false);
+		}
+		break;
+	case ShadingMode::Studio:
+		if (rendershadow) {
+			rendershadow->setVal(false);
+		}
+		if (ambientColor) {
+			ambientColor->setVal("0.72 0.72 0.74");
+		}
+		if (diffuseColor) {
+			diffuseColor->setVal("0.35 0.35 0.32");
+		}
+		if (sunAngle) {
+			sunAngle->setVal("55.0 135.0 0.0");
+		}
+		if (studioBevel) {
+			studioBevel->setVal(true);
+		}
+		break;
+	}
 }
 
 void SceneSettingsPanel::init() {
@@ -111,32 +190,14 @@ void SceneSettingsPanel::update(const char *id, command::CommandExecutionListene
 		ImGui::TextUnformatted(_("Scene settings"));
 		ImGui::Separator();
 
-		const char *shadingModeItems[] = {_("Unlit (Pure Colors)"), _("Lit (No Shadows)"), _("Shadows")};
+		const char *shadingModeItems[] = {_("Unlit (Pure Colors)"), _("Lit (No Shadows)"), _("Shadows"),
+										  _("Studio (Beveled cubes)")};
 		int currentShadingMode = _shadingMode->intVal();
 		ShadingMode shadingMode = (ShadingMode)currentShadingMode;
 
 		if (ImGui::Combo(_("Shading Mode"), &currentShadingMode, shadingModeItems, lengthof(shadingModeItems))) {
-			_shadingMode->setVal(currentShadingMode);
 			shadingMode = (ShadingMode)currentShadingMode;
-
-			switch (shadingMode) {
-			case ShadingMode::Unlit:
-				_rendershadow->setVal(false);
-				_ambientColor->setVal("1.0 1.0 1.0");
-				_diffuseColor->setVal("0.0 0.0 0.0");
-				break;
-			case ShadingMode::Lit:
-				_rendershadow->setVal(false);
-				_ambientColor->setVal("0.3 0.3 0.3");
-				_diffuseColor->setVal("0.7 0.7 0.7");
-				break;
-			case ShadingMode::Shadows:
-				_rendershadow->setVal(true);
-				_ambientColor->setVal("0.3 0.3 0.3");
-				_diffuseColor->setVal("0.7 0.7 0.7");
-				_sunAngle->setVal("45.0 135.0 0.0");
-				break;
-			}
+			applyShadingMode(shadingMode);
 		}
 
 		sceneColors(shadingMode);

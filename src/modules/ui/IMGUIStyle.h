@@ -12,6 +12,7 @@ enum {
 	StyleDark = 1,
 	StyleLight = 2,
 	StyleClassic = 3,
+	StyleStudio = 4,
 
 	MaxStyles
 };
@@ -24,6 +25,7 @@ enum {
 const char *GetStyleName(int style);
 
 void StyleColorsCorporateGrey();
+void StyleColorsStudio();
 void StyleColorsNeoSequencer();
 void StyleImGuizmo();
 

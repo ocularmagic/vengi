@@ -37,6 +37,7 @@ public:
 	// Only sort for the ui - does not change any colors in the color array of the palette
 
 	void sortOriginal();
+	// Cluster nearby hues into families, then light-to-dark. Neutrals are one gray family.
 	void sortHue();
 	void sortSaturation();
 	void sortBrightness();

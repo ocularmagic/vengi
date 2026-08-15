@@ -56,6 +56,7 @@ constexpr const char *HttpTimeoutAssets = "http_timeout_assets";
 constexpr const char *RenderCullBuffers = "r_cullbuffers";
 constexpr const char *RenderCullNodes = "r_cullnodes";
 constexpr const char *RenderOutline = "r_renderoutline";
+constexpr const char *RenderStudioBevel = "r_studiobevel";
 constexpr const char *RenderSelectionTint = "r_selectiontint";
 constexpr const char *RenderNormals = "r_normals";
 constexpr const char *RenderToneMapping = "r_tonemapping";
@@ -65,6 +66,8 @@ constexpr const char *RenderMaxAnisotropy = "r_maxanisotropy";
 // The size of the mesh chunk
 constexpr const char *VoxelMeshSize = "voxel_meshsize";
 constexpr const char *VoxelMeshMode = "voxel_meshmode";
+// Merge coplanar same-color faces for the cubic editor mesher
+constexpr const char *VoxelMergeQuads = "voxel_mergequads";
 // Mesh allocation strategy - see voxel::MeshAllocStrategy enum
 constexpr const char *VoxelMeshAlloc = "voxel_meshalloc";
 // Crop volumes to tight bounds on load (saves memory but limits editing)

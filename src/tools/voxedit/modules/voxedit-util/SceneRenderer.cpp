@@ -39,8 +39,8 @@ bool SceneRenderer::init() {
 	_showAABB = core::getVar(cfg::VoxEditShowaabb);
 	_showBones = core::getVar(cfg::VoxEditShowBones);
 	_renderShadow = core::getVar(cfg::VoxEditRendershadow);
-	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 2, N_("Shading mode"),
-										  N_("Shading mode: 0=Unlit, 1=Lit, 2=Shadows"));
+	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 3, N_("Shading mode"),
+										  N_("Shading mode: 0=Unlit, 1=Lit, 2=Shadows, 3=Studio"));
 	_shadingMode = core::Var::registerVar(voxEditShadingMode);
 	_grayInactive = core::getVar(cfg::VoxEditGrayInactive);
 	_hideInactive = core::getVar(cfg::VoxEditHideInactive);

@@ -20,6 +20,7 @@
 #include "io/Archive.h"
 #include "meshoptimizer.h"
 #include "palette/NormalPalette.h"
+#include "palette/Palette.h"
 #include "palette/PaletteLookup.h"
 #include "palette/PaletteUtil.h"
 #include "scenegraph/SceneGraph.h"
@@ -48,6 +49,42 @@
 #include <glm/gtx/compatibility.hpp>
 
 namespace voxelformat {
+
+namespace {
+
+const color::RGBA ExactInteriorWhite(255, 255, 255, 255);
+
+int findExactWhite(const palette::Palette &pal) {
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		if (pal.color(i) == ExactInteriorWhite) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+bool ensureExactWhite(palette::Palette &pal, uint8_t &outIdx) {
+	const int existing = findExactWhite(pal);
+	if (existing >= 0) {
+		outIdx = (uint8_t)existing;
+		return true;
+	}
+	uint8_t added = 0;
+	pal.tryAdd(ExactInteriorWhite, false, &added, false);
+	if (findExactWhite(pal) >= 0) {
+		outIdx = (uint8_t)findExactWhite(pal);
+		return true;
+	}
+	if (pal.colorCount() < palette::PaletteMaxColors) {
+		outIdx = (uint8_t)pal.colorCount();
+		pal.setSize(pal.colorCount() + 1);
+		pal.setColor(outIdx, ExactInteriorWhite);
+		return pal.color(outIdx) == ExactInteriorWhite;
+	}
+	return false;
+}
+
+} // namespace
 
 MeshFormat::MeshFormat() {
 	_weightedAverage = core::getVar(cfg::VoxformatRGBWeightedAverage)->boolVal();
@@ -842,18 +879,10 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 		if (targetColors <= 0) {
 			targetColors = palette::PaletteMaxColors;
 		}
-		if (reserveExactWhite) {
-			const color::RGBA white(255, 255, 255, 255);
-			bool samplesHaveWhite = false;
-			for (int i = 0; i < (int)samples.size(); ++i) {
-				if (samples[i] == white) {
-					samplesHaveWhite = true;
-					break;
-				}
-			}
-			if (!samplesHaveWhite && targetColors > 1) {
-				--targetColors;
-			}
+		if (reserveExactWhite && targetColors > 1) {
+			// Always leave a free slot. A rare exact-white surface sample can be
+			// dropped by hue-ramp quantize; tryAdd cannot add it if 256 are used.
+			--targetColors;
 		}
 		palette = palette::toPaletteWeighted(samples.data(), samples.size(), targetColors);
 		for (const auto &entry : colorMaterials) {
@@ -906,14 +935,9 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 	};
 	posMap.for_parallel(fn);
 	if (reserveExactWhite) {
-		const color::RGBA white(255, 255, 255, 255);
 		uint8_t whiteIdx = 0;
-		if (!palette.tryAdd(white, false, &whiteIdx, false)) {
-			if (palette.colorCount() < palette::PaletteMaxColors) {
-				whiteIdx = (uint8_t)palette.colorCount();
-				palette.setSize(palette.colorCount() + 1);
-				palette.setColor(whiteIdx, white);
-			}
+		if (!ensureExactWhite(palette, whiteIdx)) {
+			Log::error("Solid voxelize: could not add exact white to the palette");
 		}
 	}
 	if (palette.colorCount() == 1) {

@@ -32,10 +32,15 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 
 	if (ImGui::BeginIconMenu(ICON_LC_SPARKLES, _("Presets"))) {
 		if (ImGui::IconMenuItem(ICON_LC_ROTATE_CCW, _("Reset all"))) {
-			params = yocto::trace_params();
+			state.resetAppearance();
 			++changed;
 		}
 		ImGui::TooltipTextUnformatted(_("Restore default path tracer settings"));
+		if (ImGui::IconMenuItem(ICON_LC_BOXES, _("Studio"))) {
+			state.resetAppearance();
+			++changed;
+		}
+		ImGui::TooltipTextUnformatted(_("Match the Studio edit viewport: gray wrap lighting, no blue sky"));
 		if (ImGui::IconMenuItem(ICON_LC_SPARKLES, _("High quality"))) {
 			params = yocto::trace_params();
 			params.sampler = yocto::trace_sampler_type::path;
@@ -101,6 +106,15 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 
 	if (ImGui::BeginIconMenu(ICON_LC_SUN, _("Lighting"))) {
 		ImGui::PushItemWidth(itemWidth);
+		changed += ImGui::Checkbox(_("Sky environment"), &state.skyEnvironment);
+		ImGui::TooltipTextUnformatted(_("Use a physical sun and sky. Off matches the Studio edit viewport."));
+		float envColor[3] = {state.environmentColor.x, state.environmentColor.y, state.environmentColor.z};
+		if (ImGui::ColorEdit3(_("Environment"), envColor)) {
+			state.environmentColor = {envColor[0], envColor[1], envColor[2]};
+			++changed;
+		}
+		ImGui::TooltipTextUnformatted(_("Background and wrap lighting when sky is off"));
+		ImGui::BeginDisabled(!state.skyEnvironment);
 		changed += ImGui::SliderFloat(_("Sun intensity"), &state.sunIntensity, 0.0f, 10.0f);
 		changed += ImGui::SliderFloat(_("Sun area"), &state.sunArea, 0.0f, 5.0f);
 		ImGui::TooltipTextUnformatted(_("Sun disk size. 1.0 is about 43.5 degrees."));
@@ -108,6 +122,7 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 		changed += ImGui::SliderAngle(_("Sun azimuth"), &state.sunAzimuth, 0.0f, 360.0f);
 		changed += ImGui::Checkbox(_("Sun disk"), &state.sunDisk);
 		ImGui::TooltipTextUnformatted(_("Show visible sun disk in the sky."));
+		ImGui::EndDisabled();
 		ImGui::Separator();
 		changed += ImGui::Checkbox(_("Hide environment"), &params.envhidden);
 		ImGui::TooltipTextUnformatted(_("Removes the environment map from the camera rays."));

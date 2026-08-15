@@ -45,6 +45,12 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		yocto::trace_params defaults;
 		IM_CHECK_EQ(params.samples, defaults.samples);
 		IM_CHECK_EQ(params.bounces, defaults.bounces);
+		IM_CHECK_EQ(state.skyEnvironment, false);
+
+		ctx->MenuClick("Settings/Presets/Studio");
+		ctx->Yield();
+		IM_CHECK_EQ(state.skyEnvironment, false);
+		IM_CHECK_EQ(state.environmentColor.x, 0.91f);
 	};
 }
 

@@ -7,6 +7,7 @@
 #include "color/Color.h"
 #include "core/Log.h"
 #include "core/StringUtil.h"
+#include "core/ConfigVar.h"
 #include "core/Var.h"
 #include "image/Image.h"
 #include "io/Stream.h"
@@ -310,7 +311,15 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 	_state->scene = {};
 	_state->lights = {};
 
-	voxel::SurfaceExtractionType type = (voxel::SurfaceExtractionType)core::getVar(cfg::VoxformatMeshMode)->intVal();
+	voxel::SurfaceExtractionType type = voxel::SurfaceExtractionType::Cubic;
+	if (const core::VarPtr meshModeVar = core::getVar(cfg::VoxelMeshMode)) {
+		type = (voxel::SurfaceExtractionType)meshModeVar->intVal();
+		if (type >= voxel::SurfaceExtractionType::GreedyTexture) {
+			type = voxel::SurfaceExtractionType::Cubic;
+		}
+	}
+	const core::VarPtr mergeQuadsVar = core::getVar(cfg::VoxelMergeQuads);
+	const bool mergeQuads = mergeQuadsVar ? mergeQuadsVar->boolVal() : true;
 	voxel::ChunkMesh mesh(65536, 65536, true);
 	for (const auto &e : sceneGraph.nodes()) {
 		const scenegraph::SceneGraphNode &node = e->value;
@@ -329,7 +338,8 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 
 		const palette::Palette &palette = sceneGraph.resolvePalette(node);
 		voxel::SurfaceExtractionContext ctx =
-			voxel::createContext(type, v, region, palette, mesh, region.getLowerCorner(), true, true, false, true);
+			voxel::createContext(type, v, region, palette, mesh, region.getLowerCorner(), mergeQuads, true, false,
+								 true);
 
 		voxel::extractSurface(ctx);
 
@@ -375,8 +385,25 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 
 	_state->scene.texture_names.emplace_back("sky");
 	yocto::texture_data &texture = _state->scene.textures.emplace_back();
-	texture = yocto::image_to_texture(
-		yocto::make_sunsky(1024, 512, _state->sunElevation, 3, _state->sunDisk, _state->sunIntensity, _state->sunArea));
+	if (_state->skyEnvironment) {
+		texture = yocto::image_to_texture(yocto::make_sunsky(1024, 512, _state->sunElevation, 3, _state->sunDisk,
+															 _state->sunIntensity, _state->sunArea));
+	} else {
+		// Neutral studio wrap: slightly brighter above, still the viewport gray.
+		const int envW = 256;
+		const int envH = 128;
+		yocto::image_data env = yocto::make_image(envW, envH, true);
+		const yocto::vec3f base = _state->environmentColor;
+		for (int y = 0; y < envH; ++y) {
+			const float v = (float)y / (float)(envH - 1);
+			const float weight = 1.12f - 0.40f * v;
+			const yocto::vec3f c = base * weight;
+			for (int x = 0; x < envW; ++x) {
+				env[{x, y}] = {c.x, c.y, c.z, 1.0f};
+			}
+		}
+		texture = yocto::image_to_texture(env);
+	}
 	_state->scene.environment_names.emplace_back("sky");
 	yocto::environment_data &environment = _state->scene.environments.emplace_back();
 	environment.emission = {1, 1, 1};

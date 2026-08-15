@@ -104,6 +104,33 @@ TEST_F(MeshStateTest, testSetStateBeforeVolume) {
 	(void)meshState.shutdown();
 }
 
+TEST_F(MeshStateTest, testMergeQuadsDirtyRemeshes) {
+	voxel::RawVolume v(voxel::Region(0, 7));
+	v.setVoxel(1, 1, 1, voxel::createVoxel(voxel::VoxelType::Generic, 1));
+	v.setVoxel(2, 1, 1, voxel::createVoxel(voxel::VoxelType::Generic, 1));
+
+	MeshState meshState;
+	meshState.construct();
+	core::Var::getVar(cfg::VoxelMeshMode)->setVal((int)voxel::SurfaceExtractionType::Cubic);
+	meshState.init();
+	bool deleted = false;
+	palette::Palette pal;
+	pal.nippon();
+	(void)meshState.setVolume(0, &v, &pal, nullptr, true, deleted);
+
+	meshState.scheduleRegionExtraction(0, v.region());
+	meshState.extractAllPending();
+	EXPECT_EQ(0, meshState.pendingExtractions());
+
+	core::Var::getVar(cfg::VoxelMergeQuads)->setVal(false);
+	const bool triggerClear = meshState.update();
+	EXPECT_TRUE(triggerClear);
+	EXPECT_EQ(0, meshState.pendingExtractions());
+	EXPECT_FALSE(meshState.update());
+
+	(void)meshState.shutdown();
+}
+
 // https://github.com/vengi-voxel/vengi/issues/844
 // Verify that the cubic extractor via MeshState produces all 6 faces for a
 // voxel at the upper edge. MeshState schedules the adjacent chunk via

@@ -6,6 +6,7 @@
 #include "memento/MementoHandler.h"
 #include "OptionsPanel.h"
 #include "SceneDebugPanel.h"
+#include "SceneSettingsPanel.h"
 #include "ViewMode.h"
 #include "app/App.h"
 #include "command/CommandHandler.h"
@@ -33,12 +34,13 @@ void MenuBar::viewportOptions() {
 
 	ImGui::BeginDisabled(core::getVar(cfg::VoxelMeshMode)->intVal() == (int)voxel::SurfaceExtractionType::MarchingCubes);
 	ImGui::IconCheckboxVar(ICON_LC_BOX, cfg::RenderOutline);
+	ImGui::IconCheckboxVar(ICON_LC_BOXES, cfg::RenderStudioBevel);
 	if (core::getVar(cfg::VoxEditShowNormalPalette)->boolVal()) {
 		ImGui::IconCheckboxVar(ICON_LC_BOX, cfg::RenderNormals);
 	}
 	ImGui::IconCheckboxVar(ICON_LC_BRICK_WALL, cfg::RenderCheckerBoard);
 	ImGui::EndDisabled();
-	const char* shadingModeLabels[] = { _("Unlit"), _("Lit"), _("Shadows") };
+	const char* shadingModeLabels[] = { _("Unlit"), _("Lit"), _("Shadows"), _("Studio") };
 	int currentShadingMode = core::getVar(cfg::VoxEditShadingMode)->intVal();
 	const char* currentLabel = (currentShadingMode >= 0 && currentShadingMode < (int)lengthof(shadingModeLabels)) ?
 		shadingModeLabels[currentShadingMode] : _("Unknown");
@@ -47,7 +49,7 @@ void MenuBar::viewportOptions() {
 		for (int i = 0; i < (int)lengthof(shadingModeLabels); ++i) {
 			const bool isSelected = (currentShadingMode == i);
 			if (ImGui::Selectable(shadingModeLabels[i], isSelected)) {
-				core::getVar(cfg::VoxEditShadingMode)->setVal(i);
+				applyShadingMode((ShadingMode)i);
 			}
 			if (isSelected) {
 				ImGui::SetItemDefaultFocus();
@@ -66,16 +68,17 @@ void MenuBar::init() {
 }
 
 void MenuBar::viewModeOption() {
-	const core::Array<core::String, (int)ViewMode::AceOfSpades + 1> viewModes = {
+	const core::Array<core::String, (int)ViewMode::Max> viewModes = {
 		getViewModeString(ViewMode::Default),			// Default
 		getViewModeString(ViewMode::Simple),			// Simple
 		getViewModeString(ViewMode::All),				// All
 		getViewModeString(ViewMode::TiberianSun),		// TiberianSun
 		getViewModeString(ViewMode::RedAlert2),		// RedAlert2
 		getViewModeString(ViewMode::MinecraftSkin),	// MinecraftSkin
-		getViewModeString(ViewMode::AceOfSpades)		// AceOfSpades
+		getViewModeString(ViewMode::AceOfSpades),		// AceOfSpades
+		getViewModeString(ViewMode::Studio)			// Studio
 	};
-	static_assert(7 == (size_t)ViewMode::Max, "Unexpected viewmode array size");
+	static_assert(8 == (size_t)ViewMode::Max, "Unexpected viewmode array size");
 	const core::VarPtr &viewMode = core::getVar(cfg::VoxEditViewMode);
 	ImGui::ComboVar(viewMode, viewModes);
 }

@@ -296,17 +296,19 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 	}
 	palette::Palette pal = node.palette();
 	const color::RGBA white(255, 255, 255, 255);
-	uint8_t whiteIdx = 0;
-	// tryAdd returns false if the color is already present; index is still set.
-	pal.tryAdd(white, false, &whiteIdx, false);
-	if (pal.color(whiteIdx) != white) {
-		if (pal.colorCount() < palette::PaletteMaxColors) {
-			whiteIdx = (uint8_t)pal.colorCount();
-			pal.setSize(pal.colorCount() + 1);
-			pal.setColor(whiteIdx, white);
+	int whiteIdx = -1;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		if (pal.color(i) == white) {
+			whiteIdx = i;
+			break;
 		}
 	}
-	if (pal.color(whiteIdx) != white) {
+	if (whiteIdx < 0 && pal.colorCount() < palette::PaletteMaxColors) {
+		whiteIdx = pal.colorCount();
+		pal.setSize(pal.colorCount() + 1);
+		pal.setColor((uint8_t)whiteIdx, white);
+	}
+	if (whiteIdx < 0 || pal.color((uint8_t)whiteIdx) != white) {
 		Log::error("Solid voxelize: failed to reserve exact white for interiors");
 		return;
 	}
@@ -315,7 +317,7 @@ void MeshFormat::voxelizeSolid(scenegraph::SceneGraphNode &node, const voxel::Re
 	if (volume == nullptr) {
 		return;
 	}
-	const voxel::Voxel whiteVoxel = voxel::createVoxel(pal, whiteIdx);
+	const voxel::Voxel whiteVoxel = voxel::createVoxel(pal, (uint8_t)whiteIdx);
 	for (const glm::ivec3 &p : interiors) {
 		volume->setVoxel(p, whiteVoxel);
 	}

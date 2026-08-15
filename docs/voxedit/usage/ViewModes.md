@@ -6,6 +6,8 @@ Ace of Spades is another view mode that e.g. doesn't offer a Do-you-want-to-resi
 
 Artists that only want to edit voxels without animating them might use the simple layout to get a less complex ui.
 
+**Studio** keeps the normal editing panels (palette, brushes, brush settings, scene graph) and the **Render** tab, but applies a light theme, a pale viewport, and thin beveled per-voxel cubes (`r_studiobevel` plus unmerged cubic meshes). The path tracer defaults to the same gray studio lighting as the edit viewport.
+
 ## Panel visibility
 
 Changing the view mode writes a preset into the `ve_show*` cvars (for example `ve_showpalette`, `ve_showscript`, `ve_showanimationsettings`, `ve_showbrushes`) and `ui_showconsole`.

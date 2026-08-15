@@ -13,8 +13,11 @@
 #include "scenegraph/SceneGraph.h"
 #include "voxelformat/FormatConfig.h"
 #include "voxelformat/VolumeFormat.h"
+#include "core/ConfigVar.h"
 #include "core/GLM.h"
+#include "core/Var.h"
 #include "video/Camera.h"
+#include "voxel/SurfaceExtractor.h"
 
 class PathTracerTest : public app::AbstractTest {
 private:
@@ -26,6 +29,10 @@ public:
 			return false;
 		}
 		voxelformat::FormatConfig::init();
+		const core::VarDef meshMode(cfg::VoxelMeshMode, (int)voxel::SurfaceExtractionType::Cubic, "", "");
+		core::Var::registerVar(meshMode);
+		const core::VarDef mergeQuads(cfg::VoxelMergeQuads, true, "", "");
+		core::Var::registerVar(mergeQuads);
 		return true;
 	}
 };
@@ -89,6 +96,31 @@ TEST_F(PathTracerTest, testViewportCameraIsPrimary) {
 	const float focus = cam.targetDistance();
 	const float expectedLens = focus * expectedDistance / (focus + expectedDistance);
 	EXPECT_NEAR(scene.cameras[0].lens, expectedLens, 0.001f);
+
+	ASSERT_TRUE(pathTracer.stop());
+}
+
+TEST_F(PathTracerTest, testStudioEnvironmentDefault) {
+	scenegraph::SceneGraph sceneGraph;
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(10.0f, 10.0f, 10.0f));
+	cam.lookAt(glm::vec3(0.0f, 0.0f, 0.0f));
+	cam.update(0.0);
+
+	voxelpathtracer::PathTracer pathTracer;
+	ASSERT_FALSE(pathTracer.state().skyEnvironment);
+	ASSERT_NEAR(pathTracer.state().environmentColor.x, 0.91f, 0.001f);
+	ASSERT_NEAR(pathTracer.state().environmentColor.y, 0.91f, 0.001f);
+	ASSERT_NEAR(pathTracer.state().environmentColor.z, 0.92f, 0.001f);
+	ASSERT_TRUE(pathTracer.start(sceneGraph, &cam));
+
+	const yocto::scene_data &scene = pathTracer.state().scene;
+	ASSERT_FALSE(scene.environments.empty());
+	ASSERT_FALSE(scene.textures.empty());
+	// Studio wrap is a small lat-long map, not the 1024x512 sunsky.
+	EXPECT_EQ(scene.textures[0].width, 256);
+	EXPECT_EQ(scene.textures[0].height, 128);
 
 	ASSERT_TRUE(pathTracer.stop());
 }

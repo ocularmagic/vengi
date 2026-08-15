@@ -76,6 +76,7 @@ constexpr const char *VoxEditViewdistance = "ve_viewdistance";
 constexpr const char *VoxEditShowlockedaxis = "ve_showlockedaxis";
 constexpr const char *VoxEditRendershadow = "ve_rendershadow";
 constexpr const char *VoxEditShadingMode = "ve_shadingmode";
+constexpr const char *VoxEditViewportColor = "ve_viewportcolor";
 constexpr const char *VoxEditAnimationSpeed = "ve_animspeed";
 constexpr const char *VoxEditAutoNormalMode = "ve_autonormalmode";
 constexpr const char *VoxEditNetPort = "ve_netport";

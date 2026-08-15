@@ -227,6 +227,39 @@ TEST_F(ShapeBrushTest, testTorus) {
 	brush.shutdown();
 }
 
+TEST_F(ShapeBrushTest, testStrokePendingUndoRegion) {
+	ShapeBrush brush;
+	brush.construct();
+	ASSERT_TRUE(brush.init());
+	brush.setStrokeMode();
+	EXPECT_EQ(SceneModifiedFlags::NoUndo, brush.sceneModifiedFlags());
+
+	voxel::RawVolume volume({0, 8});
+	scenegraph::SceneGraph sceneGraph;
+	scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
+	node.setUnownedVolume(&volume);
+	BrushContext ctx;
+	ctx.cursorVoxel = voxel::createVoxel(voxel::VoxelType::Generic, 1);
+	ctx.cursorFace = voxel::FaceNames::PositiveX;
+	ctx.cursorPosition = glm::ivec3(0, 0, 0);
+	ASSERT_TRUE(brush.beginBrush(ctx));
+	EXPECT_FALSE(brush.consumePendingUndoRegion().isValid());
+
+	for (int x = 0; x < 3; ++x) {
+		ctx.cursorPosition = glm::ivec3(x, 0, 0);
+		ModifierVolumeWrapper wrapper(node, ModifierType::Place);
+		ASSERT_TRUE(brush.execute(sceneGraph, wrapper, ctx));
+		EXPECT_TRUE(wrapper.dirtyRegion().isValid());
+	}
+	brush.endBrush(ctx);
+	const voxel::Region pending = brush.consumePendingUndoRegion();
+	ASSERT_TRUE(pending.isValid());
+	EXPECT_EQ(glm::ivec3(0, 0, 0), pending.getLowerCorner());
+	EXPECT_EQ(glm::ivec3(2, 0, 0), pending.getUpperCorner());
+	EXPECT_FALSE(brush.consumePendingUndoRegion().isValid());
+	brush.shutdown();
+}
+
 TEST_F(ShapeBrushTest, testStrokeCommandNames) {
 	ShapeBrush brush;
 	brush.construct();

@@ -4,7 +4,7 @@
 
 The palette panel visualized the colors for a node. The colors can get re-ordered and changed, as well as drag-and-dropped to change the slots. See the dedicated [palette](../../Palette.md) docs for more details.
 
-You can re-order the palette colors by __Hue__, __Saturation__, __Brightness__ or __CIELab__ rules.
+You can re-order the palette colors by __Hue__, __Saturation__, __Brightness__ or __CIELab__ rules. Hue clusters nearby hues into families (reds, greens, grays, and so on), then sorts each family light to dark.
 
 Direct LoSpec palette import is possible and next to LoSpec you can import or export a lot other palette [formats](../../Formats.md), too.
 

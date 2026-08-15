@@ -153,6 +153,7 @@ bool RawVolumeRenderer::init(bool normals) {
 	_debugCascade = core::getVar(cfg::ClientDebugShadowMapCascade);
 	_tonemapping = core::getVar(cfg::RenderToneMapping);
 	_renderOutline = core::getVar(cfg::RenderOutline);
+	_studioBevel = core::getVar(cfg::RenderStudioBevel);
 	_renderNormals = core::getVar(cfg::RenderNormals);
 
 	if (!_voxelShader.setup()) {
@@ -927,6 +928,7 @@ void RawVolumeRenderer::render(const voxel::MeshStatePtr &meshState, RenderConte
 	_voxelShaderFragData.tonemapping = _tonemapping->intVal();
 	_voxelShaderFragData.renderoutline = _renderOutline->intVal();
 	_voxelShaderFragData.shadowmap = _shadowMap->intVal();
+	_voxelShaderFragData.studiobevel = _studioBevel ? _studioBevel->intVal() : 0;
 	core_assert_always(_voxelData.update(_voxelShaderFragData));
 
 	const voxel::SurfaceExtractionType meshMode = meshState->meshMode();

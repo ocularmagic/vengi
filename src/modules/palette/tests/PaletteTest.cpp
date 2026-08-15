@@ -483,4 +483,73 @@ TEST_F(PaletteTest, testMoveConstructor) {
 	EXPECT_STREQ("TestPalette", dst.name().c_str());
 }
 
+TEST_F(PaletteTest, testSortHueByFamilyThenLightToDark) {
+	Palette pal;
+	const color::RGBA darkRed = color::fromHSB(0.00f, 0.85f, 0.30f);
+	const color::RGBA lightRed = color::fromHSB(0.01f, 0.70f, 0.95f);
+	const color::RGBA wrapRed = color::fromHSB(0.99f, 0.80f, 0.55f);
+	const color::RGBA darkGreen = color::fromHSB(0.33f, 0.85f, 0.30f);
+	const color::RGBA lightGreen = color::fromHSB(0.34f, 0.70f, 0.95f);
+	const color::RGBA white(255, 255, 255);
+	const color::RGBA gray(128, 128, 128);
+	const color::RGBA black(0, 0, 0);
+
+	pal.setColor(0, darkRed);
+	pal.setColor(1, darkGreen);
+	pal.setColor(2, lightRed);
+	pal.setColor(3, white);
+	pal.setColor(4, black);
+	pal.setColor(5, lightGreen);
+	pal.setColor(6, gray);
+	pal.setColor(7, wrapRed);
+
+	const color::RGBA slotBefore = pal.color(0);
+	pal.view().sortHue();
+	EXPECT_EQ(slotBefore, pal.color(0)) << "Hue sort must only reorder the UI view";
+
+	EXPECT_EQ(2u, pal.view().uiIndex(0)) << "light red first in the red family";
+	EXPECT_EQ(7u, pal.view().uiIndex(1)) << "wraparound red stays with the red family";
+	EXPECT_EQ(0u, pal.view().uiIndex(2)) << "dark red last in the red family";
+	EXPECT_EQ(5u, pal.view().uiIndex(3)) << "light green first in the green family";
+	EXPECT_EQ(1u, pal.view().uiIndex(4)) << "dark green last in the green family";
+	EXPECT_EQ(3u, pal.view().uiIndex(5)) << "white first in the gray family";
+	EXPECT_EQ(6u, pal.view().uiIndex(6));
+	EXPECT_EQ(4u, pal.view().uiIndex(7)) << "black last in the gray family";
+}
+
+TEST_F(PaletteTest, testSortHueCloseHuesShareOneRamp) {
+	Palette pal;
+	const int redCount = 8;
+	for (int i = 0; i < redCount; ++i) {
+		const float hue = 0.01f * (float)i;
+		const float brightness = (i % 2) == 0 ? 0.35f : 0.90f;
+		pal.setColor((uint8_t)i, color::fromHSB(hue, 0.80f, brightness));
+	}
+	pal.setColor((uint8_t)redCount, color::fromHSB(0.33f, 0.80f, 0.70f));
+
+	pal.view().sortHue();
+
+	int firstRed = -1;
+	int lastRed = -1;
+	float prevL = 200.0f;
+	for (int i = 0; i < pal.colorCount(); ++i) {
+		const uint8_t slot = pal.view().uiIndex((uint8_t)i);
+		if (slot >= (uint8_t)redCount) {
+			continue;
+		}
+		if (firstRed == -1) {
+			firstRed = i;
+		}
+		lastRed = i;
+		float L = 0.0f;
+		float a = 0.0f;
+		float b = 0.0f;
+		color::getCIELab(pal.color(slot), L, a, b);
+		EXPECT_LE(L, prevL + 0.001f) << "close reds should be one light-to-dark ramp";
+		prevL = L;
+	}
+	ASSERT_NE(-1, firstRed);
+	EXPECT_EQ(redCount - 1, lastRed - firstRed) << "close reds must stay in one contiguous family";
+}
+
 } // namespace palette
