@@ -5,6 +5,7 @@
 #include "RenderPanel.h"
 #include "core/SharedPtr.h"
 #include "io/FileStream.h"
+#include "io/FormatDescription.h"
 #include "scenegraph/SceneGraph.h"
 #include "ui/IMGUIApp.h"
 #include "ui/IMGUIEx.h"
@@ -106,6 +107,7 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 
 	if (ImGui::BeginIconMenu(ICON_LC_SUN, _("Lighting"))) {
 		ImGui::PushItemWidth(itemWidth);
+		ImGui::BeginDisabled(state.hdriEnvironment);
 		changed += ImGui::Checkbox(_("Sky environment"), &state.skyEnvironment);
 		ImGui::TooltipTextUnformatted(_("Use a physical sun and sky. Off matches the Studio edit viewport."));
 		float envColor[3] = {state.environmentColor.x, state.environmentColor.y, state.environmentColor.z};
@@ -114,7 +116,35 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 			++changed;
 		}
 		ImGui::TooltipTextUnformatted(_("Background and wrap lighting when sky is off"));
-		ImGui::BeginDisabled(!state.skyEnvironment);
+		ImGui::EndDisabled();
+		changed += ImGui::Checkbox(_("HDRI image"), &state.hdriEnvironment);
+		ImGui::TooltipTextUnformatted(_("Light the scene from a Radiance .hdr environment map."));
+		ImGui::BeginDisabled(!state.hdriEnvironment);
+		if (ImGui::InputText(_("HDRI file"), &state.hdriPath)) {
+			++changed;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_LC_FILE "##hdribrowse")) {
+			static const io::FormatDescription hdriFormats[] = {
+				{"Radiance rgbE", "image/vnd.radiance", {"hdr"}, {}, 0u}, io::FormatDescription::END};
+			_app->openDialog(
+				[this](const core::String &filename, const io::FormatDescription *) {
+					voxelpathtracer::PathTracerState &st = _pathTracer.state();
+					st.hdriEnvironment = true;
+					st.hdriPath = filename;
+					_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph());
+					_sceneMgr->markDirty();
+					if (_pathTracer.started()) {
+						_pathTracer.restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+					}
+				},
+				{}, hdriFormats);
+		}
+		changed += ImGui::SliderFloat(_("HDRI intensity"), &state.hdriIntensity, 0.0f, 10.0f);
+		changed += ImGui::SliderAngle(_("HDRI azimuth"), &state.hdriAzimuth, 0.0f, 360.0f);
+		ImGui::TooltipTextUnformatted(_("Rotate the HDRI around the vertical axis."));
+		ImGui::EndDisabled();
+		ImGui::BeginDisabled(!state.skyEnvironment || state.hdriEnvironment);
 		changed += ImGui::SliderFloat(_("Sun intensity"), &state.sunIntensity, 0.0f, 10.0f);
 		changed += ImGui::SliderFloat(_("Sun area"), &state.sunArea, 0.0f, 5.0f);
 		ImGui::TooltipTextUnformatted(_("Sun disk size. 1.0 is about 43.5 degrees."));
@@ -131,6 +161,10 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 	}
 
 	if (ImGui::BeginIconMenu(ICON_LC_WRENCH, _("Advanced"))) {
+		changed += ImGui::Checkbox(_("Ground plane"), &state.groundPlane);
+		ImGui::TooltipTextUnformatted(_("Light grey floor under the lowest voxel to receive shadows."));
+		changed += ImGui::Checkbox(_("Voxel edges"), &state.studioEdges);
+		ImGui::TooltipTextUnformatted(_("Soft studio bevel on every exposed voxel face."));
 		changed += ImGui::Checkbox(_("No caustics"), &params.nocaustics);
 		ImGui::TooltipTextUnformatted(_("Removes certain paths that cause caustics"));
 		changed += ImGui::Checkbox(_("High Quality BVH"), &params.highqualitybvh);
@@ -139,6 +173,9 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 	}
 
 	if (changed > 0) {
+		if (_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph())) {
+			_sceneMgr->markDirty();
+		}
 		_pathTracer.restart(sceneGraph, _sceneMgr->activeCamera());
 	}
 }
@@ -179,6 +216,7 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 			}
 		} else {
 			if (ImGui::IconMenuItem(ICON_LC_PLAY, _("Start path tracer"))) {
+				_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph());
 				_pathTracer.start(sceneGraph, _sceneMgr->activeCamera());
 				// Always begin from the live viewport camera. Scene camera
 				// nodes and the Yocto fallback stay available in Settings.
@@ -189,6 +227,16 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 			ImGui::TooltipTextUnformatted(_("Trace the last focused viewport camera"));
 		}
 		ImGui::EndMenuBar();
+	}
+}
+
+void RenderPanel::syncFromScene(const scenegraph::SceneGraph &sceneGraph) {
+	_pathTracer.applyAppearanceFromScene(sceneGraph);
+}
+
+void RenderPanel::flushToScene() {
+	if (_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph())) {
+		_sceneMgr->markDirty();
 	}
 }
 

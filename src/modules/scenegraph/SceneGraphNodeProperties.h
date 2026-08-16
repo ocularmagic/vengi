@@ -36,6 +36,12 @@ static constexpr const char *PropSunElevation = "sun_elevation";
 static constexpr const char *PropSunAzimuth = "sun_azimuth";
 static constexpr const char *PropSunColor = "sun_color";
 static constexpr const char *PropSunDisk = "sun_disk";
+static constexpr const char *PropHdri = "hdri";
+static constexpr const char *PropHdriPath = "hdri_path";
+static constexpr const char *PropHdriIntensity = "hdri_intensity";
+static constexpr const char *PropHdriAzimuth = "hdri_azimuth";
+static constexpr const char *PropGroundPlane = "ground_plane";
+static constexpr const char *PropStudioEdges = "studio_edges";
 
 using SceneGraphNodeProperties = core::DynamicStringMap<core::String>;
 

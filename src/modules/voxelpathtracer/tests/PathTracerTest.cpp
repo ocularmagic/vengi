@@ -7,17 +7,25 @@
 #include "app/App.h"
 #include "app/tests/AbstractTest.h"
 #include "image/Image.h"
+#include "io/File.h"
 #include "io/FileStream.h"
+#include "io/Filesystem.h"
 #include "io/FilesystemArchive.h"
 #include "io/FormatDescription.h"
+#include "palette/Palette.h"
 #include "scenegraph/SceneGraph.h"
+#include "scenegraph/SceneGraphNode.h"
+#include "scenegraph/SceneGraphNodeProperties.h"
 #include "voxelformat/FormatConfig.h"
 #include "voxelformat/VolumeFormat.h"
 #include "core/ConfigVar.h"
 #include "core/GLM.h"
+#include "core/SharedPtr.h"
 #include "core/Var.h"
 #include "video/Camera.h"
+#include "voxel/RawVolume.h"
 #include "voxel/SurfaceExtractor.h"
+#include "voxel/Voxel.h"
 
 class PathTracerTest : public app::AbstractTest {
 private:
@@ -123,4 +131,116 @@ TEST_F(PathTracerTest, testStudioEnvironmentDefault) {
 	EXPECT_EQ(scene.textures[0].height, 128);
 
 	ASSERT_TRUE(pathTracer.stop());
+}
+
+static video::Camera testCamera() {
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(10.0f, 10.0f, 10.0f));
+	cam.lookAt(glm::vec3(0.0f, 0.0f, 0.0f));
+	cam.update(0.0);
+	return cam;
+}
+
+static void addUnitCube(scenegraph::SceneGraph &sceneGraph) {
+	scenegraph::SceneGraphNode modelNode(scenegraph::SceneGraphNodeType::Model);
+	voxel::RawVolume *v = new voxel::RawVolume(voxel::Region(0, 0, 0, 0, 0, 0));
+	v->setVoxel(0, 0, 0, voxel::createVoxel(voxel::VoxelType::Generic, 1));
+	palette::Palette pal;
+	pal.nippon();
+	modelNode.setPalette(pal);
+	modelNode.setVolume(v);
+	sceneGraph.emplace(core::move(modelNode));
+}
+
+TEST_F(PathTracerTest, testAppearancePersistsOnScene) {
+	scenegraph::SceneGraph sceneGraph;
+	voxelpathtracer::PathTracer pathTracer;
+	pathTracer.state().hdriEnvironment = true;
+	pathTracer.state().hdriPath = "studio.hdr";
+	pathTracer.state().hdriIntensity = 2.5f;
+	pathTracer.state().hdriAzimuth = glm::radians(45.0f);
+	pathTracer.state().groundPlane = true;
+	pathTracer.state().studioEdges = true;
+	pathTracer.writeAppearanceToScene(sceneGraph);
+
+	const scenegraph::SceneGraphNode &root = sceneGraph.root();
+	EXPECT_EQ(root.property(scenegraph::PropHdri), "true");
+	EXPECT_EQ(root.property(scenegraph::PropHdriPath), "studio.hdr");
+	EXPECT_EQ(root.property(scenegraph::PropGroundPlane), "true");
+	EXPECT_EQ(root.property(scenegraph::PropStudioEdges), "true");
+
+	pathTracer.state().resetAppearance();
+	ASSERT_FALSE(pathTracer.state().hdriEnvironment);
+	pathTracer.applyAppearanceFromScene(sceneGraph);
+	EXPECT_TRUE(pathTracer.state().hdriEnvironment);
+	EXPECT_EQ(pathTracer.state().hdriPath, "studio.hdr");
+	EXPECT_NEAR(pathTracer.state().hdriIntensity, 2.5f, 0.01f);
+	EXPECT_NEAR(pathTracer.state().hdriAzimuth, glm::radians(45.0f), 0.01f);
+	EXPECT_TRUE(pathTracer.state().groundPlane);
+	EXPECT_TRUE(pathTracer.state().studioEdges);
+}
+
+TEST_F(PathTracerTest, testHdriEnvironmentMap) {
+	const core::String path = _testApp->filesystem()->homeWritePath("pathtracer_test.hdr");
+	io::FilePtr file = core::make_shared<io::File>(path, io::FileMode::SysWrite);
+	ASSERT_TRUE(file->validHandle());
+	io::FileStream stream(file);
+	const core::String header = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 2\n";
+	ASSERT_EQ(stream.write(header.c_str(), (int)header.size()), (int)header.size());
+	const uint8_t px[16] = {255, 0, 0, 128, 0, 255, 0, 128, 0, 0, 255, 128, 255, 255, 255, 128};
+	ASSERT_EQ(stream.write(px, sizeof(px)), (int)sizeof(px));
+	stream.close();
+
+	scenegraph::SceneGraph sceneGraph;
+	sceneGraph.node(0).setProperty(scenegraph::PropHdri, true);
+	sceneGraph.node(0).setProperty(scenegraph::PropHdriPath, path);
+	video::Camera cam = testCamera();
+	voxelpathtracer::PathTracer pathTracer;
+	ASSERT_TRUE(pathTracer.start(sceneGraph, &cam));
+	EXPECT_TRUE(pathTracer.state().hdriEnvironment);
+	ASSERT_FALSE(pathTracer.state().scene.textures.empty());
+	EXPECT_EQ(pathTracer.state().scene.textures[0].width, 2);
+	EXPECT_EQ(pathTracer.state().scene.textures[0].height, 2);
+	EXPECT_FALSE(pathTracer.state().scene.textures[0].pixelsf.empty());
+	ASSERT_TRUE(pathTracer.stop());
+}
+
+TEST_F(PathTracerTest, testGroundPlaneAddsShape) {
+	scenegraph::SceneGraph sceneGraph;
+	addUnitCube(sceneGraph);
+	sceneGraph.node(0).setProperty(scenegraph::PropGroundPlane, true);
+	video::Camera cam = testCamera();
+	voxelpathtracer::PathTracer pathTracer;
+	ASSERT_TRUE(pathTracer.start(sceneGraph, &cam));
+	int triCount = 0;
+	for (const yocto::shape_data &shape : pathTracer.state().scene.shapes) {
+		triCount += (int)shape.triangles.size();
+	}
+	// One cube is 12 tris; the ground plane adds 2.
+	EXPECT_GE(triCount, 14);
+	ASSERT_TRUE(pathTracer.stop());
+}
+
+TEST_F(PathTracerTest, testStudioEdgesAddsRimTriangles) {
+	scenegraph::SceneGraph sceneGraph;
+	addUnitCube(sceneGraph);
+	video::Camera cam = testCamera();
+	voxelpathtracer::PathTracer plain;
+	ASSERT_TRUE(plain.start(sceneGraph, &cam));
+	int plainTris = 0;
+	for (const yocto::shape_data &shape : plain.state().scene.shapes) {
+		plainTris += (int)shape.triangles.size();
+	}
+	ASSERT_TRUE(plain.stop());
+
+	sceneGraph.node(0).setProperty(scenegraph::PropStudioEdges, true);
+	voxelpathtracer::PathTracer beveled;
+	ASSERT_TRUE(beveled.start(sceneGraph, &cam));
+	int bevelTris = 0;
+	for (const yocto::shape_data &shape : beveled.state().scene.shapes) {
+		bevelTris += (int)shape.triangles.size();
+	}
+	EXPECT_GT(bevelTris, plainTris);
+	ASSERT_TRUE(beveled.stop());
 }

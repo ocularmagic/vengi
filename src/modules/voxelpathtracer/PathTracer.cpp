@@ -10,6 +10,7 @@
 #include "core/ConfigVar.h"
 #include "core/Var.h"
 #include "image/Image.h"
+#include "io/File.h"
 #include "io/Stream.h"
 #include "palette/Palette.h"
 #include "palette/PaletteView.h"
@@ -24,6 +25,8 @@
 #include "voxel/SurfaceExtractor.h"
 #include "voxelrender/RenderUtil.h"
 #include "PathTracerState.h"
+
+#include <stb_image.h>
 
 #define PATHTRACER_TEXTURES 0
 
@@ -81,6 +84,74 @@ public:
 	}
 };
 
+static void pushTriangle(yocto::shape_data &shape, const yocto::vec3f &p0, const yocto::vec3f &p1,
+						 const yocto::vec3f &p2, const yocto::vec4f &color) {
+	const int offsetStart = (int)shape.triangles.size() * 3;
+	shape.positions.push_back(p0);
+	shape.positions.push_back(p1);
+	shape.positions.push_back(p2);
+	shape.colors.push_back(color);
+	shape.colors.push_back(color);
+	shape.colors.push_back(color);
+	shape.triangles.push_back({offsetStart + 0, offsetStart + 1, offsetStart + 2});
+}
+
+static void pushBevelQuad(yocto::shape_data &shape, const yocto::vec3f &c0, const yocto::vec3f &c1,
+						  const yocto::vec3f &c2, const yocto::vec3f &c3, const yocto::vec4f &color) {
+	const yocto::vec3f center = (c0 + c1 + c2 + c3) / 4.0f;
+	const float inset = 0.03f;
+	const yocto::vec3f i0 = c0 + (center - c0) * inset;
+	const yocto::vec3f i1 = c1 + (center - c1) * inset;
+	const yocto::vec3f i2 = c2 + (center - c2) * inset;
+	const yocto::vec3f i3 = c3 + (center - c3) * inset;
+	pushTriangle(shape, i0, i1, i2, color);
+	pushTriangle(shape, i0, i2, i3, color);
+	const yocto::vec4f rim{color.x * 0.68f, color.y * 0.68f, color.z * 0.68f, color.w};
+	pushTriangle(shape, c0, c1, i1, rim);
+	pushTriangle(shape, c0, i1, i0, rim);
+	pushTriangle(shape, c1, c2, i2, rim);
+	pushTriangle(shape, c1, i2, i1, rim);
+	pushTriangle(shape, c2, c3, i3, rim);
+	pushTriangle(shape, c2, i3, i2, rim);
+	pushTriangle(shape, c3, c0, i0, rim);
+	pushTriangle(shape, c3, i0, i3, rim);
+}
+
+static bool loadHdriTexture(const core::String &path, yocto::texture_data &texture) {
+	io::File file(path, io::FileMode::SysRead);
+	if (!file.exists()) {
+		Log::error("HDRI file not found: %s", path.c_str());
+		return false;
+	}
+	void *buffer = nullptr;
+	const int len = file.read(&buffer);
+	if (len <= 0 || buffer == nullptr) {
+		Log::error("Failed to read HDRI file: %s", path.c_str());
+		delete[] (uint8_t *)buffer;
+		return false;
+	}
+	int width = 0;
+	int height = 0;
+	int components = 0;
+	float *pixels = stbi_loadf_from_memory((const stbi_uc *)buffer, len, &width, &height, &components, 4);
+	delete[] (uint8_t *)buffer;
+	if (pixels == nullptr || width <= 0 || height <= 0) {
+		Log::error("Failed to decode HDRI %s: %s", path.c_str(), stbi_failure_reason());
+		if (pixels != nullptr) {
+			stbi_image_free(pixels);
+		}
+		return false;
+	}
+	yocto::image_data image = yocto::make_image(width, height, true);
+	const int count = width * height;
+	for (int i = 0; i < count; ++i) {
+		image.pixels[i] = {pixels[i * 4 + 0], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3]};
+	}
+	stbi_image_free(pixels);
+	texture = yocto::image_to_texture(image);
+	return true;
+}
+
 } // namespace priv
 
 PathTracer::PathTracer() : _state(new PathTracerState()) {
@@ -111,40 +182,44 @@ bool PathTracer::addNode(const scenegraph::SceneGraph &sceneGraph, const scenegr
 	const glm::vec3 size(region.getDimensionsInVoxels());
 	const glm::vec3 &pivot = node.pivot();
 	const glm::vec3 objPivot = pivot * size;
-	for (int i = 0; i < tris; i++) {
+	const bool studioEdges = _state->studioEdges;
+	for (int i = 0; i < tris;) {
 		const voxel::VoxelVertex &vertex0 = vertices[indices[i * 3 + 0]];
 		const voxel::VoxelVertex &vertex1 = vertices[indices[i * 3 + 1]];
 		const voxel::VoxelVertex &vertex2 = vertices[indices[i * 3 + 2]];
+		yocto::shape_data *shape = &shapes[vertex0.colorIndex];
+		const color::RGBA rgba = palette.color(vertex0.colorIndex);
+		const yocto::vec4f color = priv::toColor(color::fromRGBA(rgba), vertex0.ambientOcclusion);
+
+		if (studioEdges && i + 1 < tris) {
+			const voxel::IndexType i0 = indices[i * 3 + 0];
+			const voxel::IndexType i1 = indices[i * 3 + 1];
+			const voxel::IndexType i2 = indices[i * 3 + 2];
+			const voxel::IndexType i3 = indices[(i + 1) * 3 + 0];
+			const voxel::IndexType i4 = indices[(i + 1) * 3 + 1];
+			const voxel::IndexType i5 = indices[(i + 1) * 3 + 2];
+			voxel::IndexType fourth = i5;
+			if (i3 != i0 && i3 != i1 && i3 != i2) {
+				fourth = i3;
+			} else if (i4 != i0 && i4 != i1 && i4 != i2) {
+				fourth = i4;
+			}
+			const glm::vec3 p0 = transform.apply(vertices[i0].position, objPivot);
+			const glm::vec3 p1 = transform.apply(vertices[i1].position, objPivot);
+			const glm::vec3 p2 = transform.apply(vertices[i2].position, objPivot);
+			const glm::vec3 p3 = transform.apply(vertices[fourth].position, objPivot);
+			priv::pushBevelQuad(*shape, priv::toVec3f(p0), priv::toVec3f(p1), priv::toVec3f(p2), priv::toVec3f(p3),
+								color);
+			(void)useNormals;
+			i += 2;
+			continue;
+		}
 
 		const glm::vec3 pos0 = transform.apply(vertex0.position, objPivot);
 		const glm::vec3 pos1 = transform.apply(vertex1.position, objPivot);
 		const glm::vec3 pos2 = transform.apply(vertex2.position, objPivot);
-		// uv is the same for all three vertices
-		yocto::shape_data *shape = &shapes[vertex0.colorIndex];
-
-		shape->positions.push_back(priv::toVec3f(pos0));
-		shape->positions.push_back(priv::toVec3f(pos1));
-		shape->positions.push_back(priv::toVec3f(pos2));
-		const color::RGBA rgba = palette.color(vertex0.colorIndex);
-		const glm::vec4 &color = color::fromRGBA(rgba);
-		shape->colors.push_back(priv::toColor(color, vertex0.ambientOcclusion));
-		shape->colors.push_back(priv::toColor(color, vertex1.ambientOcclusion));
-		shape->colors.push_back(priv::toColor(color, vertex2.ambientOcclusion));
-#if PATHTRACER_TEXTURES
-		const glm::vec2 &uv = image::Image::uv(vertex0.colorIndex, 0, palette.colorCount(), 1);
-		shape->texcoords.push_back({uv[0], uv[1]});
-		shape->texcoords.push_back({uv[0], uv[1]});
-		shape->texcoords.push_back({uv[0], uv[1]});
-#endif
-		if (useNormals) {
-			shape->normals.push_back(priv::toVec3f(normals[indices[i * 3 + 0]]));
-			shape->normals.push_back(priv::toVec3f(normals[indices[i * 3 + 1]]));
-			shape->normals.push_back(priv::toVec3f(normals[indices[i * 3 + 2]]));
-		}
-
-		const int offsetStart = (int)shape->triangles.size() * 3;
-		const yocto::vec3i vidx{offsetStart + 0, offsetStart + 1, offsetStart + 2};
-		shape->triangles.push_back(vidx);
+		priv::pushTriangle(*shape, priv::toVec3f(pos0), priv::toVec3f(pos1), priv::toVec3f(pos2), color);
+		++i;
 	}
 	// const glm::vec3 &mins = mesh.getOffset();
 	_state->scene.shapes.reserve(palette.colorCount());
@@ -163,6 +238,108 @@ bool PathTracer::addNode(const scenegraph::SceneGraph &sceneGraph, const scenegr
 	}
 
 	return true;
+}
+
+void PathTracer::applyAppearanceFromScene(const scenegraph::SceneGraph &sceneGraph) {
+	_state->hdriEnvironment = false;
+	_state->hdriPath = "";
+	_state->hdriIntensity = 1.0f;
+	_state->hdriAzimuth = 0.0f;
+	_state->groundPlane = false;
+	_state->studioEdges = false;
+
+	const scenegraph::SceneGraphNode &root = sceneGraph.root();
+	const core::String &hdri = root.property(scenegraph::PropHdri);
+	if (!hdri.empty()) {
+		_state->hdriEnvironment = hdri == "true";
+	}
+	const core::String &hdriPath = root.property(scenegraph::PropHdriPath);
+	if (!hdriPath.empty()) {
+		_state->hdriPath = hdriPath;
+	}
+	const core::String &hdriIntensity = root.property(scenegraph::PropHdriIntensity);
+	if (!hdriIntensity.empty()) {
+		_state->hdriIntensity = core::string::toFloat(hdriIntensity);
+	}
+	const core::String &hdriAzimuth = root.property(scenegraph::PropHdriAzimuth);
+	if (!hdriAzimuth.empty()) {
+		_state->hdriAzimuth = glm::radians(core::string::toFloat(hdriAzimuth));
+	}
+	const core::String &groundPlane = root.property(scenegraph::PropGroundPlane);
+	if (!groundPlane.empty()) {
+		_state->groundPlane = groundPlane == "true";
+	}
+	const core::String &studioEdges = root.property(scenegraph::PropStudioEdges);
+	if (!studioEdges.empty()) {
+		_state->studioEdges = studioEdges == "true";
+	}
+}
+
+static bool setFloatPropertyIfChanged(scenegraph::SceneGraphNode &root, const char *key, float value) {
+	const core::String &cur = root.property(key);
+	if (!cur.empty() && glm::abs(cur.toFloat() - value) <= 0.001f) {
+		return false;
+	}
+	return root.setProperty(key, core::string::toString(value));
+}
+
+bool PathTracer::writeAppearanceToScene(const scenegraph::SceneGraph &sceneGraph) const {
+	scenegraph::SceneGraphNode &root = sceneGraph.node(sceneGraph.root().id());
+	bool changed = false;
+	changed |= root.setProperty(scenegraph::PropHdri, _state->hdriEnvironment ? "true" : "false");
+	changed |= root.setProperty(scenegraph::PropHdriPath, _state->hdriPath);
+	changed |= setFloatPropertyIfChanged(root, scenegraph::PropHdriIntensity, _state->hdriIntensity);
+	changed |= setFloatPropertyIfChanged(root, scenegraph::PropHdriAzimuth, glm::degrees(_state->hdriAzimuth));
+	changed |= root.setProperty(scenegraph::PropGroundPlane, _state->groundPlane ? "true" : "false");
+	changed |= root.setProperty(scenegraph::PropStudioEdges, _state->studioEdges ? "true" : "false");
+	return changed;
+}
+
+void PathTracer::addGroundPlane(const scenegraph::SceneGraph &) {
+	// Sit on the lowest already-emitted mesh vertex. Volume regions often
+	// include empty cells under the sculpt, which left a gap under the model.
+	bool any = false;
+	float minX = 1.0e30f;
+	float minY = 1.0e30f;
+	float minZ = 1.0e30f;
+	float maxX = -1.0e30f;
+	float maxZ = -1.0e30f;
+	for (const yocto::shape_data &meshShape : _state->scene.shapes) {
+		for (const yocto::vec3f &p : meshShape.positions) {
+			minX = glm::min(minX, p.x);
+			minY = glm::min(minY, p.y);
+			minZ = glm::min(minZ, p.z);
+			maxX = glm::max(maxX, p.x);
+			maxZ = glm::max(maxZ, p.z);
+			any = true;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	const float spanX = maxX - minX;
+	const float spanZ = maxZ - minZ;
+	const float pad = glm::max(16.0f, glm::max(spanX, spanZ));
+	const float y = minY;
+	const float x0 = minX - pad;
+	const float x1 = maxX + pad;
+	const float z0 = minZ - pad;
+	const float z1 = maxZ + pad;
+
+	yocto::shape_data shape;
+	priv::pushTriangle(shape, {x0, y, z0}, {x1, y, z0}, {x1, y, z1}, {0.82f, 0.82f, 0.84f, 1.0f});
+	priv::pushTriangle(shape, {x0, y, z0}, {x1, y, z1}, {x0, y, z1}, {0.82f, 0.82f, 0.84f, 1.0f});
+	_state->scene.shapes.push_back(shape);
+
+	yocto::material_data material;
+	material.type = yocto::material_type::matte;
+	material.color = {0.82f, 0.82f, 0.84f};
+	_state->scene.materials.push_back(material);
+
+	yocto::instance_data instance;
+	instance.shape = (int)_state->scene.shapes.size() - 1;
+	instance.material = (int)_state->scene.materials.size() - 1;
+	_state->scene.instances.push_back(instance);
 }
 
 void PathTracer::addCamera(const scenegraph::SceneGraphNodeCamera &node) {
@@ -319,7 +496,9 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 		}
 	}
 	const core::VarPtr mergeQuadsVar = core::getVar(cfg::VoxelMergeQuads);
-	const bool mergeQuads = mergeQuadsVar ? mergeQuadsVar->boolVal() : true;
+	const bool mergeQuads = _state->studioEdges ? false : (mergeQuadsVar ? mergeQuadsVar->boolVal() : true);
+	const bool reuseVertices = !_state->studioEdges;
+	const bool optimizeMesh = !_state->studioEdges;
 	voxel::ChunkMesh mesh(65536, 65536, true);
 	for (const auto &e : sceneGraph.nodes()) {
 		const scenegraph::SceneGraphNode &node = e->value;
@@ -338,8 +517,8 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 
 		const palette::Palette &palette = sceneGraph.resolvePalette(node);
 		voxel::SurfaceExtractionContext ctx =
-			voxel::createContext(type, v, region, palette, mesh, region.getLowerCorner(), mergeQuads, true, false,
-								 true);
+			voxel::createContext(type, v, region, palette, mesh, region.getLowerCorner(), mergeQuads, reuseVertices,
+								 false, optimizeMesh);
 
 		voxel::extractSurface(ctx);
 
@@ -357,6 +536,10 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 		for (int i = 0; i < palette.colorCount(); ++i) {
 			setupMaterial(_state->scene, palette, i);
 		}
+	}
+
+	if (_state->groundPlane) {
+		addGroundPlane(sceneGraph);
 	}
 
 	if (camera) {
@@ -385,30 +568,46 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 
 	_state->scene.texture_names.emplace_back("sky");
 	yocto::texture_data &texture = _state->scene.textures.emplace_back();
-	if (_state->skyEnvironment) {
-		texture = yocto::image_to_texture(yocto::make_sunsky(1024, 512, _state->sunElevation, 3, _state->sunDisk,
-															 _state->sunIntensity, _state->sunArea));
-	} else {
-		// Neutral studio wrap: slightly brighter above, still the viewport gray.
-		const int envW = 256;
-		const int envH = 128;
-		yocto::image_data env = yocto::make_image(envW, envH, true);
-		const yocto::vec3f base = _state->environmentColor;
-		for (int y = 0; y < envH; ++y) {
-			const float v = (float)y / (float)(envH - 1);
-			const float weight = 1.12f - 0.40f * v;
-			const yocto::vec3f c = base * weight;
-			for (int x = 0; x < envW; ++x) {
-				env[{x, y}] = {c.x, c.y, c.z, 1.0f};
-			}
+	float envAzimuth = _state->sunAzimuth;
+	yocto::vec3f envEmission = {1, 1, 1};
+	bool usedHdri = false;
+	if (_state->hdriEnvironment && !_state->hdriPath.empty()) {
+		if (priv::loadHdriTexture(_state->hdriPath, texture)) {
+			usedHdri = true;
+			envAzimuth = _state->hdriAzimuth;
+			const float intensity = _state->hdriIntensity;
+			envEmission = {intensity, intensity, intensity};
+		} else {
+			Log::warn("HDRI disabled after failed load");
+			_state->hdriEnvironment = false;
 		}
-		texture = yocto::image_to_texture(env);
+	}
+	if (!usedHdri) {
+		if (_state->skyEnvironment) {
+			texture = yocto::image_to_texture(yocto::make_sunsky(1024, 512, _state->sunElevation, 3, _state->sunDisk,
+																 _state->sunIntensity, _state->sunArea));
+		} else {
+			// Neutral studio wrap: slightly brighter above, still the viewport gray.
+			const int envW = 256;
+			const int envH = 128;
+			yocto::image_data env = yocto::make_image(envW, envH, true);
+			const yocto::vec3f base = _state->environmentColor;
+			for (int y = 0; y < envH; ++y) {
+				const float v = (float)y / (float)(envH - 1);
+				const float weight = 1.12f - 0.40f * v;
+				const yocto::vec3f c = base * weight;
+				for (int x = 0; x < envW; ++x) {
+					env[{x, y}] = {c.x, c.y, c.z, 1.0f};
+				}
+			}
+			texture = yocto::image_to_texture(env);
+		}
 	}
 	_state->scene.environment_names.emplace_back("sky");
 	yocto::environment_data &environment = _state->scene.environments.emplace_back();
-	environment.emission = {1, 1, 1};
+	environment.emission = envEmission;
 	environment.emission_tex = (int)_state->scene.textures.size() - 1;
-	environment.frame = yocto::rotation_frame({0, 1, 0}, _state->sunAzimuth);
+	environment.frame = yocto::rotation_frame({0, 1, 0}, envAzimuth);
 
 	if (_state->params.camera < 0 || _state->params.camera >= (int)_state->scene.cameras.size()) {
 		_state->params.camera = 0;
@@ -419,6 +618,7 @@ bool PathTracer::createScene(const scenegraph::SceneGraph &sceneGraph, const vid
 
 bool PathTracer::start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera) {
 	Log::debug("Create scene");
+	applyAppearanceFromScene(sceneGraph);
 	createScene(sceneGraph, camera);
 	_state->bvh = yocto::make_trace_bvh(_state->scene, _state->params);
 	_state->lights = yocto::make_trace_lights(_state->scene, _state->params);

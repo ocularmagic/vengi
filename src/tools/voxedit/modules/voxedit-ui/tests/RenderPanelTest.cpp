@@ -50,7 +50,23 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		ctx->MenuClick("Settings/Presets/Studio");
 		ctx->Yield();
 		IM_CHECK_EQ(state.skyEnvironment, false);
+		IM_CHECK_EQ(state.hdriEnvironment, false);
 		IM_CHECK_EQ(state.environmentColor.x, 0.91f);
+	};
+
+	IM_REGISTER_TEST(engine, testCategory(), "lighting appearance")->TestFunc = [=](ImGuiTestContext *ctx) {
+		IM_CHECK(focusWindow(ctx, TITLE_RENDER));
+		voxelpathtracer::PathTracerState &state = _pathTracer.state();
+
+		ctx->MenuAction(ImGuiTestAction_Open, "Settings/Lighting");
+		ctx->ItemClick("//$FOCUSED/HDRI image");
+		IM_CHECK_EQ(state.hdriEnvironment, true);
+
+		ctx->MenuAction(ImGuiTestAction_Open, "Settings/Advanced");
+		ctx->ItemClick("//$FOCUSED/Ground plane");
+		IM_CHECK_EQ(state.groundPlane, true);
+		ctx->ItemClick("//$FOCUSED/Voxel edges");
+		IM_CHECK_EQ(state.studioEdges, true);
 	};
 }
 

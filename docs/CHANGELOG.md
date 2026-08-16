@@ -14,6 +14,7 @@ General:
 
    - Added Studio view mode, Studio color theme, and beveled cube viewport display (`r_studiobevel`, `voxel_mergequads`, `ve_viewportcolor`)
    - Path tracer defaults to Studio wrap lighting (gray background) instead of a blue sun-sky; optional sky remains in Render settings
+   - Path tracer HDRI lighting (Radiance `.hdr`), ground plane shadows, and studio voxel edges; saved on the `.vengi` scene
    - Added bone index save/load support to the `vengi` format (version 8)
    - Write Wavefront OBJ materials (one MTL entry per palette color with PBR properties)
    - Refactored parts of the io module and fixed memory leaks
