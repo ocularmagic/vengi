@@ -1,6 +1,6 @@
 set(LIB voxelpathtracer)
 set(SRCS
-	PathTracer.cpp PathTracer.h
+	PathTracer.cpp PathTracer.h IPathTracer.h
 	PathTracerState.h
 )
 

@@ -7,7 +7,7 @@
 #include "image/Image.h"
 #include "ui/Panel.h"
 #include "video/Texture.h"
-#include "voxelpathtracer/PathTracer.h"
+#include "voxelpathtracer/IPathTracer.h"
 
 namespace ui {
 class IMGUIApp;
@@ -21,7 +21,7 @@ typedef core::SharedPtr<SceneManager> SceneManagerPtr;
 class RenderPanel : public ui::Panel {
 private:
 	using Super = ui::Panel;
-	voxelpathtracer::PathTracer _pathTracer;
+	voxelpathtracer::IPathTracer *_pathTracer;
 	video::TexturePtr _texture;
 	image::ImagePtr _image;
 	SceneManagerPtr _sceneMgr;
@@ -31,7 +31,8 @@ private:
 	void renderMenuBar(const scenegraph::SceneGraph &sceneGraph);
 
 public:
-	RenderPanel(ui::IMGUIApp *app, const SceneManagerPtr &sceneMgr) : Super(app, "render"), _sceneMgr(sceneMgr) {
+	RenderPanel(ui::IMGUIApp *app, const SceneManagerPtr &sceneMgr)
+		: Super(app, "render"), _pathTracer(voxelpathtracer::createPathTracer()), _sceneMgr(sceneMgr) {
 	}
 	void update(const char *id, const scenegraph::SceneGraph &sceneGraph);
 	void syncFromScene(const scenegraph::SceneGraph &sceneGraph);

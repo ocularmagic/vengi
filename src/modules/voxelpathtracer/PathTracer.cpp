@@ -681,4 +681,8 @@ image::ImagePtr PathTracer::image() {
 	return i;
 }
 
+IPathTracer *createPathTracer() {
+	return new PathTracer();
+}
+
 } // namespace voxelpathtracer

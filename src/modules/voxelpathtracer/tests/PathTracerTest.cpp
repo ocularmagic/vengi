@@ -2,6 +2,7 @@
  * @file
  */
 
+#include "voxelpathtracer/IPathTracer.h"
 #include "voxelpathtracer/PathTracer.h"
 #include "voxelpathtracer/PathTracerState.h"
 #include "app/App.h"
@@ -151,6 +152,13 @@ static void addUnitCube(scenegraph::SceneGraph &sceneGraph) {
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));
+}
+
+TEST_F(PathTracerTest, testCreatePathTracerInterface) {
+	voxelpathtracer::IPathTracer *tracer = voxelpathtracer::createPathTracer();
+	ASSERT_TRUE(tracer != nullptr);
+	EXPECT_FALSE(tracer->started());
+	delete tracer;
 }
 
 TEST_F(PathTracerTest, testAppearancePersistsOnScene) {

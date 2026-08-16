@@ -14,7 +14,7 @@
 #include "video/Texture.h"
 #include "voxedit-util/Config.h"
 #include "voxedit-util/SceneManager.h"
-#include "voxelpathtracer/PathTracer.h"
+#include "voxelpathtracer/IPathTracer.h"
 #include "voxelpathtracer/PathTracerState.h"
 
 namespace voxedit {
@@ -25,7 +25,7 @@ bool RenderPanel::init() {
 }
 
 void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
-	voxelpathtracer::PathTracerState &state = _pathTracer.state();
+	voxelpathtracer::PathTracerState &state = _pathTracer->state();
 	yocto::trace_params &params = state.params;
 	int changed = 0;
 
@@ -129,13 +129,13 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 				{"Radiance rgbE", "image/vnd.radiance", {"hdr"}, {}, 0u}, io::FormatDescription::END};
 			_app->openDialog(
 				[this](const core::String &filename, const io::FormatDescription *) {
-					voxelpathtracer::PathTracerState &st = _pathTracer.state();
+					voxelpathtracer::PathTracerState &st = _pathTracer->state();
 					st.hdriEnvironment = true;
 					st.hdriPath = filename;
-					_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph());
+					_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
 					_sceneMgr->markDirty();
-					if (_pathTracer.started()) {
-						_pathTracer.restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+					if (_pathTracer->started()) {
+						_pathTracer->restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
 					}
 				},
 				{}, hdriFormats);
@@ -173,10 +173,10 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 	}
 
 	if (changed > 0) {
-		if (_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph())) {
+		if (_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph())) {
 			_sceneMgr->markDirty();
 		}
-		_pathTracer.restart(sceneGraph, _sceneMgr->activeCamera());
+		_pathTracer->restart(sceneGraph, _sceneMgr->activeCamera());
 	}
 }
 
@@ -197,31 +197,31 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 					{}, io::format::images(), "render.png");
 			}
 		}
-		if (_pathTracer.started()) {
+		if (_pathTracer->started()) {
 			if (ImGui::IconMenuItem(ICON_LC_REFRESH_CW, _("Sync camera"))) {
-				_pathTracer.restart(sceneGraph, _sceneMgr->activeCamera());
-				_pathTracer.state().params.camera = 0;
+				_pathTracer->restart(sceneGraph, _sceneMgr->activeCamera());
+				_pathTracer->state().params.camera = 0;
 			}
 			ImGui::TooltipTextUnformatted(_("Restart from the last focused viewport (what you were looking at)"));
 			if (ImGui::IconMenuItem(ICON_LC_CIRCLE_STOP, _("Stop path tracer"))) {
-				_pathTracer.stop();
+				_pathTracer->stop();
 			}
-			const voxelpathtracer::PathTracerState &state = _pathTracer.state();
+			const voxelpathtracer::PathTracerState &state = _pathTracer->state();
 			const yocto::trace_params &params = state.params;
 			ImGui::Text(_("Sample %i / %i"), _currentSample, params.samples);
-			_pathTracer.update(&_currentSample);
-			_image = _pathTracer.image();
+			_pathTracer->update(&_currentSample);
+			_image = _pathTracer->image();
 			if (_image->isLoaded()) {
 				_texture->upload(_image);
 			}
 		} else {
 			if (ImGui::IconMenuItem(ICON_LC_PLAY, _("Start path tracer"))) {
-				_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph());
-				_pathTracer.start(sceneGraph, _sceneMgr->activeCamera());
+				_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
+				_pathTracer->start(sceneGraph, _sceneMgr->activeCamera());
 				// Always begin from the live viewport camera. Scene camera
 				// nodes and the Yocto fallback stay available in Settings.
 				if (_sceneMgr->activeCamera() != nullptr) {
-					_pathTracer.state().params.camera = 0;
+					_pathTracer->state().params.camera = 0;
 				}
 			}
 			ImGui::TooltipTextUnformatted(_("Trace the last focused viewport camera"));
@@ -231,11 +231,11 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 }
 
 void RenderPanel::syncFromScene(const scenegraph::SceneGraph &sceneGraph) {
-	_pathTracer.applyAppearanceFromScene(sceneGraph);
+	_pathTracer->applyAppearanceFromScene(sceneGraph);
 }
 
 void RenderPanel::flushToScene() {
-	if (_pathTracer.writeAppearanceToScene(_sceneMgr->sceneGraph())) {
+	if (_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph())) {
 		_sceneMgr->markDirty();
 	}
 }
@@ -248,7 +248,7 @@ void RenderPanel::update(const char *id, const scenegraph::SceneGraph &sceneGrap
 	ui::ScopedPanel::Scope scope =
 		panel.begin(title.c_str(), ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_MenuBar);
 	if (!scope) {
-		_pathTracer.stop();
+		_pathTracer->stop();
 		return;
 	}
 	renderMenuBar(sceneGraph);
@@ -274,6 +274,8 @@ void RenderPanel::shutdown() {
 	if (_texture) {
 		_texture->shutdown();
 	}
+	delete _pathTracer;
+	_pathTracer = nullptr;
 }
 
 } // namespace voxedit
