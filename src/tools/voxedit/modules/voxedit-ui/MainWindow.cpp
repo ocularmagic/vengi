@@ -283,6 +283,9 @@ bool MainWindow::save(const core::String &file, const io::FormatDescription *des
 	} else {
 		fd.set(file, desc);
 	}
+#if USE_YOCTO
+	_renderPanel.flushToScene();
+#endif
 	if (!_sceneMgr->save(fd)) {
 		Log::warn("Failed to save the model");
 		_popupFailedToSave = true;
@@ -318,6 +321,9 @@ void MainWindow::onNewScene() {
 	resetCamera();
 	_animationTimeline.resetFrames();
 	checkPossibleVolumeSplit();
+#if USE_YOCTO
+	_renderPanel.syncFromScene(_sceneMgr->sceneGraph());
+#endif
 }
 
 void MainWindow::onNewPaletteImport(const core::String &paletteName, bool setActive, bool searchBestColors) {
@@ -326,6 +332,9 @@ void MainWindow::onNewPaletteImport(const core::String &paletteName, bool setAct
 
 void MainWindow::afterLoad() {
 	resetCamera();
+#if USE_YOCTO
+	_renderPanel.syncFromScene(_sceneMgr->sceneGraph());
+#endif
 }
 
 void MainWindow::checkPossibleVolumeSplit() {

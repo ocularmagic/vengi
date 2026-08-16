@@ -44,6 +44,7 @@ private:
 	bool addNode(const scenegraph::SceneGraph &sceneGraph, const scenegraph::SceneGraphNode &node,
 				 const voxel::Mesh &mesh, bool opaque);
 	bool createScene(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera);
+	void addGroundPlane(const scenegraph::SceneGraph &sceneGraph);
 
 public:
 	PathTracer();
@@ -51,6 +52,8 @@ public:
 	PathTracerState &state() {
 		return *_state;
 	}
+	void applyAppearanceFromScene(const scenegraph::SceneGraph &sceneGraph);
+	bool writeAppearanceToScene(const scenegraph::SceneGraph &sceneGraph) const;
 	bool start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr);
 	bool restart(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr);
 	bool stop();

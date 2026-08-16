@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/String.h"
 #include <yocto_scene.h>
 #include <yocto_trace.h>
 
@@ -24,6 +25,12 @@ struct PathTracerState {
 	float sunAzimuth = 135.0f * yocto::pif / 180.0f;
 	bool sunDisk = false;
 	bool skyEnvironment = false;
+	bool hdriEnvironment = false;
+	core::String hdriPath;
+	float hdriIntensity = 1.0f;
+	float hdriAzimuth = 0.0f;
+	bool groundPlane = false;
+	bool studioEdges = false;
 	yocto::vec3f environmentColor = {0.91f, 0.91f, 0.92f};
 	float exposure = 0.0f;
 	bool filmic = false;
@@ -40,6 +47,12 @@ struct PathTracerState {
 		sunAzimuth = 135.0f * yocto::pif / 180.0f;
 		sunDisk = false;
 		skyEnvironment = false;
+		hdriEnvironment = false;
+		hdriPath = "";
+		hdriIntensity = 1.0f;
+		hdriAzimuth = 0.0f;
+		groundPlane = false;
+		studioEdges = false;
 		environmentColor = {0.91f, 0.91f, 0.92f};
 		exposure = 0.0f;
 		filmic = false;

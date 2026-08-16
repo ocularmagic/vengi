@@ -34,6 +34,8 @@ public:
 	RenderPanel(ui::IMGUIApp *app, const SceneManagerPtr &sceneMgr) : Super(app, "render"), _sceneMgr(sceneMgr) {
 	}
 	void update(const char *id, const scenegraph::SceneGraph &sceneGraph);
+	void syncFromScene(const scenegraph::SceneGraph &sceneGraph);
+	void flushToScene();
 	bool init();
 	void shutdown();
 #ifdef IMGUI_ENABLE_TEST_ENGINE
