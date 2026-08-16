@@ -4,8 +4,8 @@
 
 #pragma once
 
+#include "IPathTracer.h"
 #include "core/GLM.h"
-#include "core/SharedPtr.h"
 
 namespace video {
 class Camera;
@@ -34,7 +34,7 @@ namespace voxelpathtracer {
 
 struct PathTracerState;
 
-class PathTracer {
+class PathTracer : public IPathTracer {
 private:
 	PathTracerState *_state;
 
@@ -48,26 +48,21 @@ private:
 
 public:
 	PathTracer();
-	~PathTracer();
-	PathTracerState &state() {
+	~PathTracer() override;
+	PathTracerState &state() override {
 		return *_state;
 	}
-	void applyAppearanceFromScene(const scenegraph::SceneGraph &sceneGraph);
-	bool writeAppearanceToScene(const scenegraph::SceneGraph &sceneGraph) const;
-	bool start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr);
-	bool restart(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr);
-	bool stop();
-	bool started() const;
-
-	/**
-	 * @brief Update the path tracer. This will render a batch of samples and must get called until either stop() was
-	 * called or @c false is returned.
-	 * @return @c true if rendering is done, @c false otherwise
-	 * @sa image()
-	 */
-	bool update(int *currentSample = nullptr);
-
-	image::ImagePtr image();
+	const PathTracerState &state() const override {
+		return *_state;
+	}
+	void applyAppearanceFromScene(const scenegraph::SceneGraph &sceneGraph) override;
+	bool writeAppearanceToScene(const scenegraph::SceneGraph &sceneGraph) const override;
+	bool start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr) override;
+	bool restart(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera = nullptr) override;
+	bool stop() override;
+	bool started() const override;
+	bool update(int *currentSample = nullptr) override;
+	image::ImagePtr image() override;
 };
 
 } // namespace voxelpathtracer

@@ -12,7 +12,7 @@ namespace voxedit {
 void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 	IM_REGISTER_TEST(engine, testCategory(), "settings inputs")->TestFunc = [=](ImGuiTestContext *ctx) {
 		IM_CHECK(focusWindow(ctx, TITLE_RENDER));
-		voxelpathtracer::PathTracerState &state = _pathTracer.state();
+		voxelpathtracer::PathTracerState &state = _pathTracer->state();
 		yocto::trace_params &params = state.params;
 
 		ctx->MenuAction(ImGuiTestAction_Open, "Settings/Output");
@@ -28,7 +28,7 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 
 	IM_REGISTER_TEST(engine, testCategory(), "presets")->TestFunc = [=](ImGuiTestContext *ctx) {
 		IM_CHECK(focusWindow(ctx, TITLE_RENDER));
-		voxelpathtracer::PathTracerState &state = _pathTracer.state();
+		voxelpathtracer::PathTracerState &state = _pathTracer->state();
 		yocto::trace_params &params = state.params;
 
 		ctx->MenuClick("Settings/Presets/High quality");
@@ -56,7 +56,7 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 
 	IM_REGISTER_TEST(engine, testCategory(), "lighting appearance")->TestFunc = [=](ImGuiTestContext *ctx) {
 		IM_CHECK(focusWindow(ctx, TITLE_RENDER));
-		voxelpathtracer::PathTracerState &state = _pathTracer.state();
+		voxelpathtracer::PathTracerState &state = _pathTracer->state();
 
 		ctx->MenuAction(ImGuiTestAction_Open, "Settings/Lighting");
 		ctx->ItemClick("//$FOCUSED/HDRI image");
