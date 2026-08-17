@@ -11,10 +11,11 @@ set(SRCS
 	PathTracerTraversalWGSL.h
 	PathTracerWebGPU.cpp PathTracerWebGPU.h
 	Appearance.cpp Appearance.h
+	PathTracerHdri.cpp PathTracerHdri.h
 	VoxelDDAPathTracer.cpp VoxelDDAPathTracer.h
 )
 
-engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES yocto voxelrender image io stb_image)
+engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES yocto voxelrender image io stb_image tinyexr)
 
 set(TEST_SRCS
 	tests/PathTracerTest.cpp
