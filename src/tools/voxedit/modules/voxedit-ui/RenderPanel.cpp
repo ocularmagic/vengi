@@ -129,7 +129,9 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 		ImGui::SameLine();
 		if (ImGui::Button(ICON_LC_FILE "##hdribrowse")) {
 			static const io::FormatDescription hdriFormats[] = {
-				{"Radiance rgbE", "image/vnd.radiance", {"hdr"}, {}, 0u}, io::FormatDescription::END};
+				{"Radiance rgbE", "image/vnd.radiance", {"hdr"}, {}, 0u},
+				{"OpenEXR", "image/x-exr", {"exr"}, {}, 0u},
+				io::FormatDescription::END};
 			_app->openDialog(
 				[this](const core::String &filename, const io::FormatDescription *) {
 					voxelpathtracer::PathTracerState &st = _pathTracer->state();

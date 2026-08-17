@@ -16,6 +16,8 @@
 #include "voxelpathtracer/PathTracerTraversalWGSL.h"
 #include "voxelpathtracer/PathTracerWebGPU.h"
 #include "voxelpathtracer/VoxelDDAPathTracer.h"
+#include "voxelpathtracer/PathTracerHdri.h"
+#include "tinyexr.h"
 #include "app/App.h"
 #include "app/tests/AbstractTest.h"
 #include "color/RGBA.h"
@@ -706,6 +708,57 @@ TEST_F(PathTracerTest, testHdriEnvironmentMap) {
 	EXPECT_EQ(pathTracer.state().scene.textures[0].height, 2);
 	EXPECT_FALSE(pathTracer.state().scene.textures[0].pixelsf.empty());
 	ASSERT_TRUE(pathTracer.stop());
+}
+
+TEST_F(PathTracerTest, testExrHdriLoadsAndBuildsCdf) {
+	// Synthesize a small EXR, then load it through the same decode path the
+	// renderer uses. Verify the pixels survive and the DDA tracer accepts it.
+	const int w = 4;
+	const int h = 2;
+	core::Buffer<float> src((size_t)w * (size_t)h * 4u);
+	for (int i = 0; i < w * h; ++i) {
+		src[i * 4 + 0] = 1.0f;   // R
+		src[i * 4 + 1] = 0.5f;   // G
+		src[i * 4 + 2] = 0.25f;  // B
+		src[i * 4 + 3] = 1.0f;   // A
+	}
+	unsigned char *exrMem = nullptr;
+	const char *err = nullptr;
+	const int exrSize = SaveEXRToMemory(src.data(), w, h, 4, 1, &exrMem, &err);
+	ASSERT_GT(exrSize, 0) << (err != nullptr ? err : "save failed");
+
+	const core::String path = _testApp->filesystem()->homeWritePath("pathtracer_test.exr");
+	io::FilePtr file = core::make_shared<io::File>(path, io::FileMode::SysWrite);
+	ASSERT_TRUE(file->validHandle());
+	io::FileStream stream(file);
+	ASSERT_EQ(exrSize, stream.write((const char *)exrMem, exrSize));
+	stream.close();
+	file = {};
+	free(exrMem);
+
+	core::Buffer<float> rgba;
+	int outW = 0;
+	int outH = 0;
+	ASSERT_TRUE(voxelpathtracer::pathTracerLoadHdriFloats(path, rgba, outW, outH));
+	EXPECT_EQ(w, outW);
+	EXPECT_EQ(h, outH);
+	ASSERT_EQ((size_t)w * (size_t)h * 4u, rgba.size());
+	EXPECT_FLOAT_EQ(1.0f, rgba[0]);
+	EXPECT_FLOAT_EQ(0.5f, rgba[1]);
+	EXPECT_FLOAT_EQ(0.25f, rgba[2]);
+	EXPECT_FLOAT_EQ(1.0f, rgba[3]);
+
+	// The DDA tracer must load the .exr and build a finite luminance CDF.
+	scenegraph::SceneGraph sceneGraph;
+	sceneGraph.node(0).setProperty(scenegraph::PropHdri, true);
+	sceneGraph.node(0).setProperty(scenegraph::PropHdriPath, path);
+	video::Camera cam = testCamera();
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 32;
+	tracer.state().params.samples = 1;
+	ASSERT_TRUE(tracer.start(sceneGraph, &cam));
+	EXPECT_TRUE(tracer.state().hdriEnvironment);
+	ASSERT_TRUE(tracer.stop());
 }
 
 TEST_F(PathTracerTest, testGroundPlaneAddsShape) {

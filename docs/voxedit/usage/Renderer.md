@@ -8,7 +8,7 @@ Open the **Render** panel and use the **Settings** menu in its menubar to config
 
 The default lighting is a neutral Studio wrap (same light gray as the edit viewport). **Settings → Presets → Studio** restores that look. Enable **Sky environment** if you want the older blue sun-and-sky.
 
-**Settings → Lighting → HDRI image** lights the scene from a Radiance `.hdr` environment map. Pick a file, then use **HDRI intensity** and **HDRI azimuth** to scale and rotate it. HDRI wins over sky and studio wrap; those sliders are disabled while HDRI is on. A failed load falls back to studio wrap.
+**Settings → Lighting → HDRI image** lights the scene from a Radiance `.hdr` or OpenEXR `.exr` environment map. Pick a file, then use **HDRI intensity** and **HDRI azimuth** to scale and rotate it. HDRI wins over sky and studio wrap; those sliders are disabled while HDRI is on. A failed load falls back to studio wrap.
 
 **Hide environment** is on by default. Camera rays that miss the model (and the ground plane) write transparent pixels, so the backdrop is a void. Environment lighting, including HDRI, still reaches the voxels. Uncheck it to show the studio wrap, sky, or HDRI behind the model. The checkbox is stored on the scene.
 
