@@ -24,6 +24,33 @@ struct ShaderResourceBinding {
 	uint8_t binding;
 	Type type;
 	uint8_t stageFlags; // 1=vertex, 2=fragment, 4=geometry, 8=compute
+	const char *name;
 };
+
+/**
+ * Binding point for a named uniform block after GLES strips layout(binding=N).
+ * Returns -1 if the table has no UniformBuffer entry for that name.
+ */
+inline int shaderResourceUniformBlockBinding(const ShaderResourceBinding *bindings, int count,
+											const char *blockName) {
+	if (bindings == nullptr || blockName == nullptr || count <= 0) {
+		return -1;
+	}
+	for (int i = 0; i < count; ++i) {
+		if (bindings[i].type != ShaderResourceBinding::UniformBuffer || bindings[i].name == nullptr) {
+			continue;
+		}
+		const char *lhs = bindings[i].name;
+		const char *rhs = blockName;
+		while (*lhs != '\0' && *lhs == *rhs) {
+			++lhs;
+			++rhs;
+		}
+		if (*lhs == '\0' && *rhs == '\0') {
+			return (int)bindings[i].binding;
+		}
+	}
+	return -1;
+}
 
 }

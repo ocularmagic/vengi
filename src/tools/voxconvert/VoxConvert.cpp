@@ -363,12 +363,6 @@ app::AppState VoxConvert::onInit() {
 	Log::info("* export models:     - %s", (_exportModels ? "true" : "false"));
 	Log::info("* resize models:     - %s", (_resizeModels ? "true" : "false"));
 
-	if (core::getVar(cfg::MetricFlavor)->strVal().empty()) {
-		Log::info(
-			"Please enable anonymous usage statistics. You can do this by setting the metric_flavor cvar to 'json'");
-		Log::info("Example: '%s -set metric_flavor json --input xxx --output yyy'", fullAppname().c_str());
-	}
-
 	if (!outfiles.empty()) {
 		if (!hasArg("--force")) {
 			for (const core::String &outfile : outfiles) {

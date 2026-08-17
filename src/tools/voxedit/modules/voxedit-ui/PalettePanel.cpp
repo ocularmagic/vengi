@@ -64,25 +64,92 @@ void PalettePanel::handleContextMenu(uint8_t paletteColorIdx, scenegraph::SceneG
 		// we might open the context menu for a color that is not in the selection
 		const bool isCurrentInSelection = _selectedIndices.has(paletteColorIdx);
 		if (usableColor) {
-			for (int i = 0; i < (int)palette::MaterialProperty::MaterialMax; ++i) {
-				if (i == palette::MaterialProperty::MaterialNone) {
-					continue;
+			const palette::Material &mat = palette.material(paletteColorIdx);
+			const bool volumetric = mat.type == palette::MaterialType::Media ||
+									(mat.has(palette::MaterialProperty::MaterialDensity) &&
+									 mat.value(palette::MaterialProperty::MaterialDensity) > 1.0e-3f);
+
+			auto applyToIndices = [&](auto &&fn) {
+				if (isCurrentInSelection) {
+					for (const auto &e : _selectedIndices) {
+						fn(e->key);
+					}
+				} else {
+					fn(paletteColorIdx);
 				}
-				const palette::MaterialProperty prop = (palette::MaterialProperty)i;
+			};
+
+			// Live-apply on drag; one undo step when the slider is released.
+			// Marking every tick fills the 64-slot memento ring and drops
+			// the initial scene state (undo then prints "No previous
+			// modification state").
+			auto slider = [&](palette::MaterialProperty prop, const char *label, const char *tip) {
 				float value = palette.material(paletteColorIdx).value(prop);
-				if (ImGui::SliderFloat(palette::MaterialPropertyName(prop), &value,
-									palette::MaterialPropertyMinMax(prop).minVal,
-									palette::MaterialPropertyMinMax(prop).maxVal)) {
-					memento::ScopedMementoGroup group(_sceneMgr->mementoHandler(), "changematerial");
-					if (isCurrentInSelection) {
-						for (const auto &e : _selectedIndices) {
-							_sceneMgr->nodeSetMaterial(node.uuid(), e->key, prop, value);
+				if (ImGui::SliderFloat(label, &value, palette::MaterialPropertyMinMax(prop).minVal,
+									   palette::MaterialPropertyMinMax(prop).maxVal)) {
+					applyToIndices([&](uint8_t idx) { palette.setMaterialValue(idx, prop, value); });
+					palette.markSave();
+				}
+				if (ImGui::IsItemDeactivatedAfterEdit()) {
+					_sceneMgr->mementoHandler().markPaletteChange(_sceneMgr->sceneGraph(), node);
+				}
+				if (tip != nullptr) {
+					ImGui::TooltipTextUnformatted(tip);
+				}
+			};
+
+			ImGui::BeginDisabled(volumetric);
+			slider(palette::MaterialProperty::MaterialMetal, _("metal"), nullptr);
+			slider(palette::MaterialProperty::MaterialRoughness, _("roughness"), nullptr);
+			slider(palette::MaterialProperty::MaterialSpecular, _("specular"), nullptr);
+			slider(palette::MaterialProperty::MaterialIndexOfRefraction, _("indexOfRefraction"), nullptr);
+			slider(palette::MaterialProperty::MaterialAttenuation, _("attenuation"), nullptr);
+			ImGui::EndDisabled();
+
+			slider(palette::MaterialProperty::MaterialEmit, _("emit"),
+				   _("The color produces light. On a solid it is a lamp. On volumetric it is fire, plasma, or neon gas."));
+			const float emitNow = palette.material(paletteColorIdx).value(palette::MaterialProperty::MaterialEmit);
+			ImGui::BeginDisabled(emitNow <= 1.0e-4f);
+			ImGui::Indent();
+			slider(palette::MaterialProperty::MaterialFlux, _("Boost emit"),
+				   _("Extra punch on emit. MagicaVoxel flux. Does nothing when emit is 0."));
+			ImGui::Unindent();
+			ImGui::EndDisabled();
+
+			ImGui::Separator();
+			bool volumetricEdit = volumetric;
+			if (ImGui::Checkbox(_("Volumetric"), &volumetricEdit)) {
+				applyToIndices([&](uint8_t idx) {
+					if (volumetricEdit) {
+						palette.setMaterialType(idx, palette::MaterialType::Media);
+						if (!palette.material(idx).has(palette::MaterialProperty::MaterialDensity) ||
+							palette.material(idx).value(palette::MaterialProperty::MaterialDensity) <= 1.0e-3f) {
+							palette.setMaterialValue(idx, palette::MaterialProperty::MaterialDensity, 0.45f);
+						}
+						if (!palette.material(idx).has(palette::MaterialProperty::MaterialMedia)) {
+							palette.setMaterialValue(idx, palette::MaterialProperty::MaterialMedia, 0.85f);
 						}
 					} else {
-						_sceneMgr->nodeSetMaterial(node.uuid(), paletteColorIdx, prop, value);
+						palette.setMaterialType(idx, palette::MaterialType::Diffuse);
+						palette.setMaterialValue(idx, palette::MaterialProperty::MaterialDensity, 0.0f);
 					}
-				}
+				});
+				palette.markSave();
+				_sceneMgr->mementoHandler().markPaletteChange(_sceneMgr->sceneGraph(), node);
 			}
+			ImGui::TooltipTextUnformatted(
+				_("Cloud, fog, smoke, or dust. Light travels through these voxels. Use emit if the volume should make its own light."));
+
+			ImGui::BeginDisabled(!volumetricEdit);
+			ImGui::Indent();
+			slider(palette::MaterialProperty::MaterialDensity, _("Density"),
+				   _("How much stuff is in the air. 0 is haze, 0.5 is still see-through, 1 is thick smoke."));
+			slider(palette::MaterialProperty::MaterialMedia, _("Scatter"),
+				   _("0 is smoke: you see through to what is behind. 1 is a lit cloud of this color. Independent of emit."));
+			slider(palette::MaterialProperty::MaterialPhase, _("Rim light"),
+				   _("Needs Scatter above 0. 0 is even. 1 is a hot edge toward the light."));
+			ImGui::Unindent();
+			ImGui::EndDisabled();
 
 			if (color.a != 255) {
 				if (ImGui::IconMenuItem(ICON_LC_ERASER, _("Remove alpha"))) {

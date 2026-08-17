@@ -74,6 +74,11 @@ public:
 
 	bool init(const core::String& organisation, const core::String& appname);
 	void shutdown();
+	/**
+	 * Flush pending writes to persistent storage on platforms that use a
+	 * synchronized virtual filesystem. This is a no-op elsewhere.
+	 */
+	void sync() const;
 
 	const Paths& registeredPaths() const;
 	/**

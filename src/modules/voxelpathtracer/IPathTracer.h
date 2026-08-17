@@ -26,8 +26,8 @@ struct PathTracerState;
 /**
  * @brief Backend-neutral path tracer used by the Render panel.
  *
- * Yocto is the current implementation. Later voxel/GPU backends implement the
- * same start/stop/update/image contract and share PathTracerState settings.
+ * The Render panel uses this contract. createPathTracer() currently returns the
+ * CPU voxel-grid tracer. The Yocto mesh tracer remains available as PathTracer.
  */
 class IPathTracer {
 public:

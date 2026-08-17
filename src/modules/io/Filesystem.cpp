@@ -328,6 +328,18 @@ void Filesystem::shutdown() {
 #endif
 }
 
+void Filesystem::sync() const {
+#ifdef __EMSCRIPTEN__
+	EM_ASM({
+		FS.syncfs(false, function (err) {
+			if (err) {
+				console.error('Filesystem sync error:', err);
+			}
+		});
+	});
+#endif
+}
+
 core::String Filesystem::sysAbsolutePath(const core::String &path) const {
 	core::String abspath = fs_realpath(path.c_str());
 	if (abspath.empty()) {

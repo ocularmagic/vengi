@@ -22,7 +22,6 @@
 #include "io/StdoutWriteStream.h"
 #include "io/BufferedReadWriteStream.h"
 #include "io/Stream.h"
-#include "metric/MetricFacade.h"
 #include "util/VarUtil.h"
 #include "core/sdl/SDLSystem.h"
 #include <SDL3/SDL_main.h>
@@ -700,11 +699,6 @@ AppState App::onConstruct() {
 		logVar->setVal(logLevelVal);
 	}
 
-	const core::VarDef metricFlavor(cfg::MetricFlavor, "", {"telegraf", "etsy", "datadog", "influx", "json"},
-									N_("Metric flavor"),
-									N_("The flavor of the metrics output. This can be used to integrate with different "
-									   "monitoring systems. If empty, metrics are disabled."));
-	core::Var::registerVar(metricFlavor);
 	Log::init();
 
 	command::Command::registerCommand("i18nlist")
@@ -935,9 +929,6 @@ AppState App::onInit() {
 	_threadPool->init();
 
 	_pipe.init();
-
-	metric::init(fullAppname());
-	metric::count("start", 1, {{"os", _osName}, {"os_version", _osVersion}});
 
 	core_trace_init();
 
@@ -1469,12 +1460,6 @@ void App::usageFooter() const {
 	Log::info(" * Bug reports: " PROJECT_HOMEPAGE_URL);
 	Log::info(" * Mastodon: https://mastodon.social/@mgerhardy");
 	Log::info(" * Discord: https://vengi-voxel.de/discord");
-
-	if (core::getVar(cfg::MetricFlavor)->strVal().empty()) {
-		Log::info(
-			"Please enable anonymous usage statistics. You can do this by setting the metric_flavor cvar to 'json'");
-		Log::info("Example: '%s -set metric_flavor json --input xxx --output yyy'", fullAppname().c_str());
-	}
 }
 
 void App::usage() const {
@@ -1739,10 +1724,6 @@ AppState App::onCleanup() {
 		addBlocker(AppState::Init);
 		return AppState::Init;
 	}
-
-	metric::count("stop");
-
-	metric::shutdown();
 
 	saveConfiguration();
 

@@ -397,6 +397,14 @@ TEST_F(PaletteTest, testMaterialProperties) {
 	EXPECT_FLOAT_EQ(0.9f, pal.material(idx).specular);
 
 	EXPECT_TRUE(pal.hasMaterials());
+
+	pal.setMaterialType(idx, MaterialType::Media);
+	pal.setMedia(idx, 0.0f);
+	EXPECT_TRUE(pal.material(idx).has(MaterialMedia));
+	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialMedia));
+	pal.setPhase(idx, 0.0f);
+	EXPECT_TRUE(pal.material(idx).has(MaterialPhase));
+	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialPhase));
 }
 
 TEST_F(PaletteTest, testColorNames) {

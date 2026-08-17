@@ -180,7 +180,7 @@ set(SRCS
 	private/voxelbuilder/VBXFormat.h         private/voxelbuilder/VBXFormat.cpp
 	private/voxelmax/VMaxFormat.h            private/voxelmax/VMaxFormat.cpp
 )
-engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES scenegraph metric tinyxml2 json ${LIB}-external)
+engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES scenegraph tinyxml2 json ${LIB}-external)
 engine_target_link_libraries(TARGET ${LIB} DEPENDENCIES commonlua)
 
 set(TEST_SRCS

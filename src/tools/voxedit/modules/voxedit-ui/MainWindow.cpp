@@ -197,18 +197,12 @@ bool MainWindow::init() {
 	_popupAbout = core::getVar(cfg::VoxEditPopupAbout);
 	_popupRenameNode = core::getVar(cfg::VoxEditPopupRenameNode);
 
-	_isNewVersionAvailable = util::isNewVersionAvailable();
+	_isNewVersionAvailable = false;
 	if (!initViewports()) {
 		return false;
 	}
 
 	_popupTipOfTheDay->setVal(_tipOfTheDay->boolVal());
-
-	const core::VarPtr &appVersion = core::getVar(cfg::AppVersion);
-	if (appVersion->strVal().empty() || util::isNewerVersion(PROJECT_VERSION, appVersion->strVal())) {
-		appVersion->setVal(PROJECT_VERSION);
-		_popupWelcome->setVal("true");
-	}
 
 #if USE_YOCTO
 	_renderPanel.init();
@@ -291,6 +285,7 @@ bool MainWindow::save(const core::String &file, const io::FormatDescription *des
 		_popupFailedToSave = true;
 		return false;
 	}
+	_app->filesystem()->sync();
 	Log::info("Saved the model to %s", fd.c_str());
 	return true;
 }
@@ -608,10 +603,6 @@ void MainWindow::popupWelcome() {
 		ImGui::IconDialog(ICON_LC_LIGHTBULB, _("Welcome to VoxEdit!"));
 		ImGui::TextWrappedUnformatted(_("The mission: Create a free, open-source and multi-platform voxel "
 						   "editor with animation support for artists and developers."));
-		ImGui::Separator();
-		ImGui::TextWrappedUnformatted(_("We would like to enable anonymous usage metrics to improve the editor. "
-						   "Please consider enabling it."));
-		ui::metricOption();
 		ImGui::Separator();
 		_app->keyMapOption();
 		ImGui::Separator();

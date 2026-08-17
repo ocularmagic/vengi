@@ -34,12 +34,17 @@ struct PathTracerState {
 	yocto::vec3f environmentColor = {0.91f, 0.91f, 0.92f};
 	float exposure = 0.0f;
 	bool filmic = false;
+	// Set when WebGPU recovers or falls back. Shown in the Render panel so a
+	// device-lost or exhausted GPU never becomes a silent black frame.
+	core::String backendMessage;
 
 	PathTracerState() : context(yocto::make_trace_context({})) {
+		params.envhidden = true;
 	}
 
 	void resetAppearance() {
 		params = yocto::trace_params();
+		params.envhidden = true;
 		aperture = 0.0f;
 		sunIntensity = 1.0f;
 		sunArea = 1.0f;

@@ -4,6 +4,7 @@
 
 #include "color/ColorUtil.h"
 #include "PathTracer.h"
+#include "Appearance.h"
 #include "color/Color.h"
 #include "core/Log.h"
 #include "core/StringUtil.h"
@@ -118,11 +119,12 @@ static void pushBevelQuad(yocto::shape_data &shape, const yocto::vec3f &c0, cons
 }
 
 static bool loadHdriTexture(const core::String &path, yocto::texture_data &texture) {
-	io::File file(path, io::FileMode::SysRead);
-	if (!file.exists()) {
+	const core::String &resolvedPath = resolveHdriPath(path);
+	if (resolvedPath.empty()) {
 		Log::error("HDRI file not found: %s", path.c_str());
 		return false;
 	}
+	io::File file(resolvedPath, io::FileMode::SysRead);
 	void *buffer = nullptr;
 	const int len = file.read(&buffer);
 	if (len <= 0 || buffer == nullptr) {
@@ -241,58 +243,11 @@ bool PathTracer::addNode(const scenegraph::SceneGraph &sceneGraph, const scenegr
 }
 
 void PathTracer::applyAppearanceFromScene(const scenegraph::SceneGraph &sceneGraph) {
-	_state->hdriEnvironment = false;
-	_state->hdriPath = "";
-	_state->hdriIntensity = 1.0f;
-	_state->hdriAzimuth = 0.0f;
-	_state->groundPlane = false;
-	_state->studioEdges = false;
-
-	const scenegraph::SceneGraphNode &root = sceneGraph.root();
-	const core::String &hdri = root.property(scenegraph::PropHdri);
-	if (!hdri.empty()) {
-		_state->hdriEnvironment = hdri == "true";
-	}
-	const core::String &hdriPath = root.property(scenegraph::PropHdriPath);
-	if (!hdriPath.empty()) {
-		_state->hdriPath = hdriPath;
-	}
-	const core::String &hdriIntensity = root.property(scenegraph::PropHdriIntensity);
-	if (!hdriIntensity.empty()) {
-		_state->hdriIntensity = core::string::toFloat(hdriIntensity);
-	}
-	const core::String &hdriAzimuth = root.property(scenegraph::PropHdriAzimuth);
-	if (!hdriAzimuth.empty()) {
-		_state->hdriAzimuth = glm::radians(core::string::toFloat(hdriAzimuth));
-	}
-	const core::String &groundPlane = root.property(scenegraph::PropGroundPlane);
-	if (!groundPlane.empty()) {
-		_state->groundPlane = groundPlane == "true";
-	}
-	const core::String &studioEdges = root.property(scenegraph::PropStudioEdges);
-	if (!studioEdges.empty()) {
-		_state->studioEdges = studioEdges == "true";
-	}
-}
-
-static bool setFloatPropertyIfChanged(scenegraph::SceneGraphNode &root, const char *key, float value) {
-	const core::String &cur = root.property(key);
-	if (!cur.empty() && glm::abs(cur.toFloat() - value) <= 0.001f) {
-		return false;
-	}
-	return root.setProperty(key, core::string::toString(value));
+	voxelpathtracer::applyAppearanceFromScene(*_state, sceneGraph);
 }
 
 bool PathTracer::writeAppearanceToScene(const scenegraph::SceneGraph &sceneGraph) const {
-	scenegraph::SceneGraphNode &root = sceneGraph.node(sceneGraph.root().id());
-	bool changed = false;
-	changed |= root.setProperty(scenegraph::PropHdri, _state->hdriEnvironment ? "true" : "false");
-	changed |= root.setProperty(scenegraph::PropHdriPath, _state->hdriPath);
-	changed |= setFloatPropertyIfChanged(root, scenegraph::PropHdriIntensity, _state->hdriIntensity);
-	changed |= setFloatPropertyIfChanged(root, scenegraph::PropHdriAzimuth, glm::degrees(_state->hdriAzimuth));
-	changed |= root.setProperty(scenegraph::PropGroundPlane, _state->groundPlane ? "true" : "false");
-	changed |= root.setProperty(scenegraph::PropStudioEdges, _state->studioEdges ? "true" : "false");
-	return changed;
+	return voxelpathtracer::writeAppearanceToScene(*_state, sceneGraph);
 }
 
 void PathTracer::addGroundPlane(const scenegraph::SceneGraph &) {
@@ -679,10 +634,6 @@ image::ImagePtr PathTracer::image() {
 		return {};
 	}
 	return i;
-}
-
-IPathTracer *createPathTracer() {
-	return new PathTracer();
 }
 
 } // namespace voxelpathtracer

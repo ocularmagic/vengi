@@ -90,7 +90,7 @@ with a description and hints how to modify/use them.
 | `cl_vsync`                    | enable or disable v-sync                                                                 |
 | `cl_gamma`                    | tweak the gamma value that is applied last on rendering                                  |
 | `cl_display`                  | the display index if you are using multiple monitors `[0-numDisplays)`                   |
-| `r_studiobevel`               | Darken voxel face rims so each cube reads as a beveled block                             | true/false   |
+| `r_studiobevel`               | Darken voxel face rims so each cube reads as a beveled block                             | true (default) |
 | `voxel_mergequads`            | Merge coplanar same-color faces for the cubic editor mesher                              | true/false   |
 | `ve_viewportcolor`            | Edit viewport clear color (`r g b a`). Alpha `0` keeps the UI background                 | `0 0 0 0`    |
 

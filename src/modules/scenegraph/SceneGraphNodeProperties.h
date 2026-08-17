@@ -42,6 +42,9 @@ static constexpr const char *PropHdriIntensity = "hdri_intensity";
 static constexpr const char *PropHdriAzimuth = "hdri_azimuth";
 static constexpr const char *PropGroundPlane = "ground_plane";
 static constexpr const char *PropStudioEdges = "studio_edges";
+static constexpr const char *PropEnvHidden = "env_hidden";
+static constexpr const char *PropRenderExposure = "render_exposure";
+static constexpr const char *PropRenderFilmic = "render_filmic";
 
 using SceneGraphNodeProperties = core::DynamicStringMap<core::String>;
 

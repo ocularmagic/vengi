@@ -33,7 +33,7 @@ A few of the features are:
 * Path tracer rendering
 * [Game mode](usage/GameMode.md) with physics-based first-person walkthrough
 * Session recording and playback for editing sessions
-* Configurable shading modes (unlit, lit, shadows) with bloom post-processing
+* Configurable shading modes (unlit, lit, shadows, studio beveled cubes) with bloom post-processing. Studio is the default.
 * Fill and hollow operations for volumes
 * Auto-save with configurable interval
 * Drag-and-drop between panels for models, palette colors and assets

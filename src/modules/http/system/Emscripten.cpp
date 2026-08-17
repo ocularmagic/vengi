@@ -22,6 +22,9 @@ static void fetchErrorCallback(emscripten_fetch_t *fetch) {
 	RequestResponse *ctx = static_cast<RequestResponse *>(fetch->userData);
 	ctx->statusCode = fetch->status;
 	Log::debug("Error %i", fetch->status);
+	// Closing an incomplete synchronous fetch invokes its error callback in
+	// current Emscripten releases. Clear it first to avoid recursive close.
+	fetch->__attributes.onerror = nullptr;
 	emscripten_fetch_close(fetch);
 }
 

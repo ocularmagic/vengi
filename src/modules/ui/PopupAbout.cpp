@@ -12,19 +12,6 @@
 
 namespace ui {
 
-void metricOption() {
-	const core::VarPtr &metricFlavor = core::getVar(cfg::MetricFlavor);
-	bool metrics = !metricFlavor->strVal().empty();
-	if (ImGui::IconCheckbox(ICON_LC_CHART_AREA, _("Enable sending anonymous metrics"), &metrics)) {
-		if (metrics) {
-			metricFlavor->setVal("json");
-		} else {
-			metricFlavor->setVal("");
-		}
-	}
-	ImGui::TooltipTextUnformatted(_("Send anonymous usage statistics"));
-}
-
 void popupAbout(const core::Function<void()> &customTabs, bool isNewVersionAvailable) {
 	int popupWidth = ImGui::Size(60);
 	int popupHeight = ImGui::Height(20);
@@ -52,8 +39,6 @@ void popupAbout(const core::Function<void()> &customTabs, bool isNewVersionAvail
 #ifndef NDEBUG
 					ImGui::TextUnformatted(_("Debug build with reduced performance"));
 #endif
-					metricOption();
-
 					ImGui::Dummy(ImVec2(1, 10));
 					ImGui::URLIconItem(ICON_LC_CIRCLE_QUESTION_MARK, _("Website"), "https://vengi-voxel.github.io/vengi/",
 									   urlIconWidth);

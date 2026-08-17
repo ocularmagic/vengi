@@ -10,7 +10,6 @@
 
 namespace ui {
 
-void metricOption();
 void popupAbout(const core::Function<void()> &customTabs = {}, bool isNewVersionAvailable = false);
 
 } // namespace ui

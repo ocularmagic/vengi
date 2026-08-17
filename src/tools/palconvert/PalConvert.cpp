@@ -181,12 +181,6 @@ app::AppState PalConvert::onInit() {
 		Log::info("* output file:       - %s", outfile.c_str());
 	}
 
-	if (core::getVar(cfg::MetricFlavor)->strVal().empty()) {
-		Log::info(
-			"Please enable anonymous usage statistics. You can do this by setting the metric_flavor cvar to 'json'");
-		Log::info("Example: '%s -set metric_flavor json --input xxx --output yyy'", fullAppname().c_str());
-	}
-
 	if (!outfile.empty()) {
 		if (!hasArg("--force")) {
 			const bool outfileExists = filesystem()->open(outfile)->exists();

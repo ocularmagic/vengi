@@ -58,8 +58,6 @@ bool OptionsPanel::categoryHasMatch(OptionCategory category) const {
 		return matchesVarFilter(cfg::VoxEditPenPressureAffectsRadius) ||
 			   matchesVarFilter(cfg::VoxEditPenRadiusMin) || matchesVarFilter(cfg::VoxEditPenRadiusMax) ||
 			   matchesVarFilter(cfg::VoxEditPenEraserSwitchesMode);
-	case OptionCategory::Metrics:
-		return matchesVarFilter(cfg::MetricFlavor);
 	case OptionCategory::Layout:
 		return matchesFilter(_("Reset layout"));
 	case OptionCategory::Display:
@@ -196,12 +194,6 @@ void OptionsPanel::renderEditor() {
 		static const core::Array<core::String, (int)voxel::MeshAllocStrategy::Max> meshAllocModes = {
 			_("Full pre-alloc"), _("Small (grow as needed)")};
 		ImGui::ComboVar(cfg::VoxelMeshAlloc, meshAllocModes);
-	}
-}
-
-void OptionsPanel::renderMetrics() {
-	if (matchesVarFilter(cfg::MetricFlavor)) {
-		ui::metricOption();
 	}
 }
 
@@ -476,9 +468,6 @@ void OptionsPanel::renderContent() {
 	case OptionCategory::Input:
 		renderInput();
 		break;
-	case OptionCategory::Metrics:
-		renderMetrics();
-		break;
 	case OptionCategory::Layout:
 		renderLayout();
 		break;
@@ -522,9 +511,9 @@ void OptionsPanel::renderTree() {
 		{ICON_LC_SETTINGS, _("General"),
 		 {{OptionCategory::UserInterface, _("User Interface")},
 		  {OptionCategory::Editor, _("Editor")},
-		  {OptionCategory::Metrics, _("Metrics")},
-		  {OptionCategory::Layout, _("Layout")}},
-		 4},
+		  {OptionCategory::Layout, _("Layout")},
+		  {}},
+		 3},
 		{ICON_LC_PEN, _("Input"),
 		 {{OptionCategory::Input, _("Pen")},
 		  {}, {}, {}},
