@@ -86,12 +86,6 @@ constexpr const char *AppHomePath = "app_homepath";
 constexpr const char *AppVersion = "app_version";
 constexpr const char *AppUserName = "app_username";
 
-constexpr const char *MetricPort = "metric_port";
-constexpr const char *MetricHost = "metric_host";
-constexpr const char *MetricJsonUrl = "metric_json_url";
-constexpr const char *MetricFlavor = "metric_flavor";
-constexpr const char *MetricUUID = "metric_uuid";
-
 constexpr const char *VoxelPalette = "palette";
 constexpr const char *NormalPalette = "normalpalette";
 

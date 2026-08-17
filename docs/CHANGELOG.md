@@ -12,9 +12,14 @@ Known [issues](https://github.com/vengi-voxel/vengi/issues?q=is%3Aissue+is%3Aope
 
 General:
 
+   - Studio UI style and Studio (beveled cubes) shading are the defaults (`ui_style`, `ve_shadingmode`, `r_studiobevel`)
    - Added Studio view mode, Studio color theme, and beveled cube viewport display (`r_studiobevel`, `voxel_mergequads`, `ve_viewportcolor`)
    - Path tracer defaults to Studio wrap lighting (gray background) instead of a blue sun-sky; optional sky remains in Render settings
    - Path tracer HDRI lighting (Radiance `.hdr`), ground plane shadows, and studio voxel edges; saved on the `.vengi` scene
+   - Hide environment is on by default and stored on the `.vengi` scene (`env_hidden`)
+   - Voxel-grid path tracer: emit voxels are area lights; volumetric emit is fire/plasma/neon gas; glass/alpha use Beer's-law attenuation; metal uses GGX; Volumetric is fog/cloud/smoke (density, scatter, rim light); Output Denoise is an edge-aware stills filter
+   - Render panel uses a CPU voxel-grid path tracer (no mesh) via `IPathTracer`
+   - Browser voxedit traces on WebGPU when available, recovers or falls back to CPU after device loss, and persists appearance through IndexedDB
    - Added bone index save/load support to the `vengi` format (version 8)
    - Write Wavefront OBJ materials (one MTL entry per palette color with PBR properties)
    - Refactored parts of the io module and fixed memory leaks

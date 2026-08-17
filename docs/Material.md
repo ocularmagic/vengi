@@ -1,6 +1,6 @@
 # Material
 
-Each color entry in the [palette](Palette.md) can have several material properties. Most of them are not handled in the vengi renderers, but can be useful when exporting the voxels to other [formats](Formats.md).
+Each color entry in the [palette](Palette.md) can have several material properties. The voxel-grid path tracer uses **emit** (a lamp on solids; a softer in-volume glow on volumetric), **Boost emit** (Magica `_flux`, extra punch when emit is up), **metal** / **roughness** / **specular**, **alpha** / **Glass** / **Blend**, **indexOfRefraction**, **attenuation**, and **Volumetric** (**Density**, **Scatter**, **Rim light**) for cloud, fog, smoke, and dust. **Scatter** is how much environment light the volume shows (smoke vs cloud). It is not emit. Checking **Volumetric** stores Magica type Media. `ldr` and `sp` are kept for import/export but hidden in the palette popup.
 
 ## Materials
 

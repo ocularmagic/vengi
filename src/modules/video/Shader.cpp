@@ -87,6 +87,36 @@ static core::String stripLayoutQualifier(const core::String &src, const char *qu
 			out.erase(pos, end - pos);
 		}
 	}
+	// A standalone qualifier leaves an invalid empty declaration behind, e.g.
+	// "layout(binding = 2)" becomes "layout()". WebGL ES rejects that syntax.
+	size_t layoutPos = 0;
+	while ((layoutPos = out.find("layout", layoutPos)) != core::String::npos) {
+		if (layoutPos > 0) {
+			const char previous = out[layoutPos - 1];
+			if ((previous >= 'a' && previous <= 'z') || (previous >= 'A' && previous <= 'Z') ||
+					(previous >= '0' && previous <= '9') || previous == '_') {
+				layoutPos += 6;
+				continue;
+			}
+		}
+		size_t open = layoutPos + 6;
+		while (open < out.size() && (out[open] == ' ' || out[open] == '\t')) {
+			++open;
+		}
+		if (open >= out.size() || out[open] != '(') {
+			layoutPos += 6;
+			continue;
+		}
+		size_t close = open + 1;
+		while (close < out.size() && (out[close] == ' ' || out[close] == '\t' || out[close] == '\r' || out[close] == '\n')) {
+			++close;
+		}
+		if (close < out.size() && out[close] == ')') {
+			out.erase(layoutPos, close - layoutPos + 1);
+			continue;
+		}
+		layoutPos = open + 1;
+	}
 	return out;
 }
 #endif

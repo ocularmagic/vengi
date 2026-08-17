@@ -19,6 +19,12 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		const int oldResolution = params.resolution;
 		ctx->ItemInputValue("//$FOCUSED/Dimensions", oldResolution + 128);
 		IM_CHECK(params.resolution == oldResolution + 128);
+		const float oldExposure = state.exposure;
+		ctx->ItemInputValue("//$FOCUSED/Exposure", oldExposure + 1.0f);
+		IM_CHECK_EQ(state.exposure, oldExposure + 1.0f);
+		const bool oldFilmic = state.filmic;
+		ctx->ItemClick("//$FOCUSED/Filmic");
+		IM_CHECK_EQ(state.filmic, !oldFilmic);
 
 		ctx->MenuAction(ImGuiTestAction_Open, "Settings/Quality");
 		const int oldSamples = params.samples;

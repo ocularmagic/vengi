@@ -39,18 +39,18 @@ bool SceneRenderer::init() {
 	_showAABB = core::getVar(cfg::VoxEditShowaabb);
 	_showBones = core::getVar(cfg::VoxEditShowBones);
 	_renderShadow = core::getVar(cfg::VoxEditRendershadow);
-	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 3, N_("Shading mode"),
+	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 3, 0, 3, N_("Shading mode"),
 										  N_("Shading mode: 0=Unlit, 1=Lit, 2=Shadows, 3=Studio"));
 	_shadingMode = core::Var::registerVar(voxEditShadingMode);
 	_grayInactive = core::getVar(cfg::VoxEditGrayInactive);
 	_hideInactive = core::getVar(cfg::VoxEditHideInactive);
-	const core::VarDef voxEditAmbientColor(cfg::VoxEditAmbientColor, "0.3 0.3 0.3", N_("Ambient color"),
+	const core::VarDef voxEditAmbientColor(cfg::VoxEditAmbientColor, "0.72 0.72 0.74", N_("Ambient color"),
 										   N_("Ambient color for lit rendering in r g b format"));
 	_ambientColor = core::Var::registerVar(voxEditAmbientColor);
-	const core::VarDef voxEditDiffuseColor(cfg::VoxEditDiffuseColor, "0.7 0.7 0.7", N_("Diffuse color"),
+	const core::VarDef voxEditDiffuseColor(cfg::VoxEditDiffuseColor, "0.35 0.35 0.32", N_("Diffuse color"),
 										   N_("Diffuse color for lit rendering in r g b format"));
 	_diffuseColor = core::Var::registerVar(voxEditDiffuseColor);
-	const core::VarDef voxEditSunAngle(cfg::VoxEditSunAngle, "35.0 135.0 0.0", N_("Sun angle"),
+	const core::VarDef voxEditSunAngle(cfg::VoxEditSunAngle, "55.0 135.0 0.0", N_("Sun angle"),
 									   N_("pitch, yaw and ignored roll in degrees"));
 	_sunAngle = core::Var::registerVar(voxEditSunAngle);
 

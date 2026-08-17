@@ -18,7 +18,6 @@ static const char *tips[]{
 	N_("When importing meshes, you can switch between different voxelization methods in the options menu."),
 	N_("Delete voxels in edit mode by pressing <cmd:+actionexecutedelete> or by using the erase modifier."),
 	N_("Switch between different color themes in the options menu."),
-	N_("Please activate anonymous usage metrics in the options or the about dialog."),
 	N_("You can change your default key bindings to Magicavoxel, Blender, Vengi, Qubicle, Goxel or 3dsMax style. Check the bindings window in the options menu."),
 	N_("You can save your viewport as video or as screenshot."),
 	N_("Press <cmd:pickcolor> to pick a color from the scene."),

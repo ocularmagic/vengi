@@ -898,7 +898,9 @@ bool generateSrc(const core::String& templateHeader, const core::String& templat
 			if (ubuf.layout.binding >= 0) {
 				entries += "\t\t{";
 				entries += core::string::toString(ubuf.layout.binding);
-				entries += ", video::ShaderResourceBinding::UniformBuffer, 1 | 2},\n"; // vertex + fragment
+				entries += ", video::ShaderResourceBinding::UniformBuffer, 1 | 2, \"";
+			entries += ubuf.name;
+			entries += "\"},\n"; // vertex + fragment
 				++bindingCount;
 			}
 		}
@@ -911,7 +913,9 @@ bool generateSrc(const core::String& templateHeader, const core::String& templat
 			if (layoutIter != shaderStruct.layouts.end() && layoutIter->second.binding >= 0) {
 				entries += "\t\t{";
 				entries += core::string::toString(layoutIter->second.binding);
-				entries += ", video::ShaderResourceBinding::CombinedImageSampler, 2},\n"; // fragment
+				entries += ", video::ShaderResourceBinding::CombinedImageSampler, 2, \"";
+			entries += v.name;
+			entries += "\"},\n"; // fragment
 				++bindingCount;
 			}
 		}

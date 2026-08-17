@@ -188,10 +188,32 @@ void FileDialog::selectFilter(video::OpenFileMode type, int index) {
 
 #ifdef __EMSCRIPTEN__
 void FileDialog::uploadHandler(std::string const& filename, std::string const& mimetype, std::string_view buffer, void* userdata) {
+	if (filename.empty() || buffer.empty()) {
+		return;
+	}
+	const core::String uploadedFilename = core::string::extractFilenameWithExtension(filename.c_str());
+	if (uploadedFilename.empty()) {
+		return;
+	}
 	io::MemoryReadStream stream(buffer.data(), buffer.size());
 	FileDialog *fileDialog = (FileDialog*)userdata;
-	io::filesystem()->homeWrite(filename.c_str(), stream);
+	const io::FilesystemPtr &filesystem = io::filesystem();
+	if (filesystem->homeWrite(uploadedFilename, stream) != (long)buffer.size()) {
+		Log::error("Failed to import browser file %s", uploadedFilename.c_str());
+		return;
+	}
+	fileDialog->_currentPath = filesystem->homePath();
 	fileDialog->readDir(video::OpenFileMode::Open);
+	for (size_t i = 0; i < fileDialog->_filteredEntities.size(); ++i) {
+		const io::FilesystemEntry *entry = fileDialog->_filteredEntities[i];
+		if (entry->name == uploadedFilename) {
+			fileDialog->_selectedEntry = *entry;
+			fileDialog->_entryIndex = i;
+			fileDialog->_scrollToSelection = true;
+			break;
+		}
+	}
+	filesystem->sync();
 }
 #endif
 
@@ -487,6 +509,14 @@ bool FileDialog::entitiesPanel(video::OpenFileMode type, int height, float reser
 					break;
 				}
 				_needsSorting = specs->SpecsDirty = false;
+			}
+		}
+		if (_scrollToSelection && !_selectedEntry.name.empty()) {
+			for (size_t i = 0; i < _filteredEntities.size(); ++i) {
+				if (_filteredEntities[i]->name == _selectedEntry.name) {
+					_entryIndex = i;
+					break;
+				}
 			}
 		}
 

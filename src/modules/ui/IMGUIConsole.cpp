@@ -96,11 +96,13 @@ void IMGUIConsole::drawContent(command::CommandExecutionListener &listener) {
 			ImGui::CommandIconMenuItem(ICON_LC_LIST_X, _("Clear"), "con_clear", true, &listener);
 			ImGui::Separator();
 			if (ImGui::IconMenuItem(ICON_LC_CLIPBOARD_COPY, _("Copy"))) {
-				ImGui::LogToClipboard();
+				core::String text;
+				text.reserve(_messages.size() * 64);
 				for (const Message &msg : _messages) {
-					ImGui::TextUnformatted(msg.message.c_str());
+					text.append(removeAnsiColors(msg.message.c_str()));
+					text.append('\n');
 				}
-				ImGui::LogFinish();
+				ImGui::SetClipboardText(text.c_str());
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndMenu();

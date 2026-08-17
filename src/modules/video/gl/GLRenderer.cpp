@@ -1471,9 +1471,52 @@ void deleteTextures(uint8_t amount, Id *ids) {
 }
 
 void registerShaderBindings(Id program, const ShaderResourceBinding *bindings, int count) {
+#ifdef USE_OPENGLES
+	if (program == InvalidId || bindings == nullptr || count <= 0) {
+		return;
+	}
+	if (glGetActiveUniformBlockName == nullptr || glUniformBlockBinding == nullptr) {
+		return;
+	}
+	GLint blockCount = 0;
+	glGetProgramiv((GLuint)program, GL_ACTIVE_UNIFORM_BLOCKS, &blockCount);
+	checkError();
+	for (int i = 0; i < blockCount; ++i) {
+		char name[128];
+		name[0] = '\0';
+		glGetActiveUniformBlockName((GLuint)program, (GLuint)i, (GLsizei)sizeof(name), nullptr, name);
+		int binding = shaderResourceUniformBlockBinding(bindings, count, name);
+		if (binding < 0) {
+			if (!SDL_strcmp(name, "u_frag")) {
+				binding = 1;
+			} else if (!SDL_strcmp(name, "u_vert")) {
+				binding = 0;
+			}
+		}
+		if (binding < 0) {
+			GLint vs = 0;
+			GLint fs = 0;
+			glGetActiveUniformBlockiv((GLuint)program, (GLuint)i, GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER, &vs);
+			glGetActiveUniformBlockiv((GLuint)program, (GLuint)i, GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER, &fs);
+			if (vs != 0 && fs == 0) {
+				binding = 0;
+			} else if (fs != 0 && vs == 0) {
+				binding = 1;
+			}
+		}
+		if (binding >= 0) {
+			glUniformBlockBinding((GLuint)program, (GLuint)i, (GLuint)binding);
+			Log::debug("GLES uniform block %s -> binding %i", name, binding);
+		} else {
+			Log::warn("GLES uniform block %s has no binding point", name);
+		}
+	}
+	checkError();
+#else
 	(void)program;
 	(void)bindings;
 	(void)count;
+#endif
 }
 
 void setObjectName(Id handle, ObjectNameType type, const core::String &name) {

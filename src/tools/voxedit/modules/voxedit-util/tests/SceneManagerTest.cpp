@@ -2994,4 +2994,10 @@ TEST_F(SceneManagerTest, testAddModelAdjacentIgnoreOverlap) {
 	EXPECT_NE(InvalidNodeId, _sceneMgr->addModelAdjacent(_sceneMgr->sceneGraph().uuid(sourceNodeId), voxel::FaceNames::PositiveX));
 }
 
+TEST_F(SceneManagerTest, testStudioShadingDefault) {
+	const core::VarPtr shading = core::getVar(cfg::VoxEditShadingMode);
+	ASSERT_TRUE(shading);
+	EXPECT_EQ(shading->intVal(), 3);
+}
+
 } // namespace voxedit

@@ -1,0 +1,1261 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Path tracer WebGPU traversal test</title>
+</head>
+<body>
+	<h1>Path tracer WebGPU traversal test</h1>
+	<pre id="result" data-state="running">RUNNING</pre>
+	<script type="module">
+		const result = document.getElementById('result');
+
+		function expect(condition, message) {
+			if (!condition) {
+				throw new Error(message);
+			}
+		}
+
+		function near(actual, expected, epsilon, message) {
+			expect(Math.abs(actual - expected) <= epsilon,
+				`${message}: expected ${expected}, got ${actual}`);
+		}
+
+		function writeVec4(view, byteOffset, values, setter) {
+			for (let i = 0; i < 4; ++i) {
+				view[setter](byteOffset + i * 4, values[i], true);
+			}
+		}
+
+		function writeIdentity(view, byteOffset) {
+			for (let column = 0; column < 4; ++column) {
+				for (let row = 0; row < 4; ++row) {
+					view.setFloat32(byteOffset + (column * 4 + row) * 4,
+						column === row ? 1.0 : 0.0, true);
+				}
+			}
+		}
+
+		function uploadBuffer(device, data, usage, label) {
+			const buffer = device.createBuffer({
+				label,
+				size: data.byteLength,
+				usage,
+				mappedAtCreation: true
+			});
+			new Uint8Array(buffer.getMappedRange()).set(new Uint8Array(data));
+			buffer.unmap();
+			return buffer;
+		}
+
+		function makeGrid() {
+			const data = new ArrayBuffer(192);
+			const view = new DataView(data);
+			writeVec4(view, 0, [0, 0, 0, 0], 'setInt32');
+			writeVec4(view, 16, [1, 1, 2, 0], 'setUint32');
+			writeVec4(view, 32, [0, 0, 2, 0], 'setUint32');
+			writeVec4(view, 48, [0, 0, 0, 0], 'setFloat32');
+			writeIdentity(view, 64);
+			writeIdentity(view, 128);
+			return data;
+		}
+
+		function makeMaterials() {
+			const stride = 96;
+			const data = new ArrayBuffer(stride * 2);
+			const view = new DataView(data);
+			// Material zero is opaque. Material one is glass.
+			writeVec4(view, 0, [0.6, 0.4, 0.2, 1.0], 'setFloat32');
+			writeVec4(view, 48, [0.0, 0.7, 0.5, 0.0], 'setFloat32');
+			view.setUint32(80, 0, true);
+			view.setUint32(stride + 80, 2, true);
+			return data;
+		}
+
+		function makeMediaMaterials() {
+			const data = new ArrayBuffer(96);
+			const view = new DataView(data);
+			writeVec4(view, 0, [0.8, 0.3, 0.1, 1.0], 'setFloat32');
+			writeVec4(view, 32, [2.0, 0.5, 0.1, 0.0], 'setFloat32');
+			writeVec4(view, 48, [0.0, 0.8, 0.5, 0.8], 'setFloat32');
+			writeVec4(view, 64, [0.0, 0.0, 0.0, 0.0], 'setFloat32');
+			view.setUint32(80, 4, true);
+			return data;
+		}
+
+		function makeRays() {
+			const stride = 64;
+			const data = new ArrayBuffer(stride * 4);
+			const view = new DataView(data);
+			const writeRay = (index, origin, direction, skipCell, skipGrid, shadow) => {
+				const offset = index * stride;
+				writeVec4(view, offset, [...origin, 1.0e-4], 'setFloat32');
+				writeVec4(view, offset + 16, [...direction, 100.0], 'setFloat32');
+				writeVec4(view, offset + 32, [...skipCell, skipGrid], 'setInt32');
+				writeVec4(view, offset + 48, [shadow ? 1 : 0, 0, 0, 0], 'setUint32');
+			};
+			writeRay(0, [0.5, 0.5, 3.0], [0.0, 0.0, -1.0], [0, 0, 0], -1, false);
+			writeRay(1, [0.5, 0.5, 3.0], [0.0, 0.0, -1.0], [0, 0, 0], -1, true);
+			writeRay(2, [0.5, 0.5, 0.5], [0.0, 0.0, 1.0], [0, 0, 0], 0, false);
+			writeRay(3, [2.0, 2.0, 3.0], [0.0, 0.0, -1.0], [0, 0, 0], -1, false);
+			return data;
+		}
+
+		function makeCamera() {
+			const data = new ArrayBuffer(80);
+			const view = new DataView(data);
+			const columns = [
+				[0.5, 0.0, 0.0, 0.0],
+				[0.0, 0.5, 0.0, 0.0],
+				[0.0, 0.0, 2.0, 0.0],
+				[0.5, 0.5, 1.0, 1.0]
+			];
+			for (let column = 0; column < 4; ++column) {
+				writeVec4(view, column * 16, columns[column], 'setFloat32');
+			}
+			writeVec4(view, 64, [2.0, 2.0, 0.5, 0.5], 'setFloat32');
+			return data;
+		}
+
+		function makeLighting(maxBounces = 1) {
+			const data = new ArrayBuffer(64);
+			const view = new DataView(data);
+			writeVec4(view, 0, [0.91, 0.91, 0.92, 0.0], 'setFloat32');
+			writeVec4(view, 16, [0.0, 1.0, 0.0, 1.0], 'setFloat32');
+			writeVec4(view, 32, [1.0, 0.0, 100.0, 0.0], 'setFloat32');
+			writeVec4(view, 48, [0, 1, 0, maxBounces], 'setUint32');
+			return data;
+		}
+
+		function makeHdriLighting() {
+			const data = makeLighting(1);
+			const view = new DataView(data);
+			writeVec4(view, 32, [1.5, 0.0, 100.0, 0.0], 'setFloat32');
+			writeVec4(view, 48, [2, 0, 0, 1], 'setUint32');
+			return data;
+		}
+
+		function makeHdriCamera() {
+			const data = new ArrayBuffer(80);
+			const view = new DataView(data);
+			writeVec4(view, 32, [0.0, 0.0, -1.0, 0.0], 'setFloat32');
+			writeVec4(view, 48, [2.0, 2.0, 3.0, 1.0], 'setFloat32');
+			writeVec4(view, 64, [1.0, 1.0, 1.0, 1.0], 'setFloat32');
+			return data;
+		}
+
+		function makeEnvironmentData(width, height, cdfSum) {
+			const data = new ArrayBuffer(32);
+			const view = new DataView(data);
+			writeVec4(view, 0, [width, height, width * height, 1], 'setUint32');
+			view.setFloat32(16, cdfSum, true);
+			return data;
+		}
+
+		function makeMediaData(enabled) {
+			const data = new ArrayBuffer(32);
+			const view = new DataView(data);
+			writeVec4(view, 0, [enabled ? 1 : 0, 232, 0, 0], 'setUint32');
+			writeVec4(view, 16, [0.28, 64.0, 0.0, 0.0], 'setFloat32');
+			return data;
+		}
+
+		function makeBounceGrid() {
+			const data = new ArrayBuffer(192);
+			const view = new DataView(data);
+			writeVec4(view, 0, [-8, 0, -8, 0], 'setInt32');
+			writeVec4(view, 16, [16, 3, 16, 0], 'setUint32');
+			writeVec4(view, 32, [0, 0, 16 * 3 * 16, 0], 'setUint32');
+			writeVec4(view, 48, [0, 0, 0, 0], 'setFloat32');
+			writeIdentity(view, 64);
+			writeIdentity(view, 128);
+			return data;
+		}
+
+		function makeBounceCells() {
+			const size = 16;
+			const cells = new Uint32Array(size * 3 * size);
+			for (let z = 0; z < size; ++z) {
+				for (let x = 0; x < size; ++x) {
+					cells[(z * 3) * size + x] = 1;
+					cells[(z * 3 + 2) * size + x] = 2;
+				}
+			}
+			return cells.buffer;
+		}
+
+		function makeBounceMaterials() {
+			const stride = 96;
+			const data = new ArrayBuffer(stride * 2);
+			const view = new DataView(data);
+			writeVec4(view, 0, [0.8, 0.8, 0.8, 1.0], 'setFloat32');
+			writeVec4(view, 48, [0.0, 1.0, 0.5, 0.0], 'setFloat32');
+			view.setUint32(80, 0, true);
+			writeVec4(view, stride, [0.5, 0.5, 0.5, 1.0], 'setFloat32');
+			writeVec4(view, stride + 16, [4.0, 2.0, 1.0, 1.0], 'setFloat32');
+			writeVec4(view, stride + 48, [0.0, 1.0, 0.5, 0.0], 'setFloat32');
+			view.setUint32(stride + 80, 0, true);
+			return data;
+		}
+
+		function makeBounceCamera() {
+			const data = new ArrayBuffer(80);
+			const view = new DataView(data);
+			const columns = [
+				[0.0, 0.0, 0.0, 0.0],
+				[0.0, 0.0, 0.0, 0.0],
+				[0.0, -1.0, 0.0, 0.0],
+				[0.5, 0.5, 0.5, 1.0]
+			];
+			for (let column = 0; column < 4; ++column) {
+				writeVec4(view, column * 16, columns[column], 'setFloat32');
+			}
+			writeVec4(view, 64, [1.0, 1.0, 1.0, 1.0], 'setFloat32');
+			return data;
+		}
+
+		function makeTransparentMaterials(surfaceType) {
+			const stride = 96;
+			const data = new ArrayBuffer(stride * 2);
+			const view = new DataView(data);
+			writeVec4(view, 0, [1.0, 1.0, 1.0, 0.0], 'setFloat32');
+			writeVec4(view, 16, [0.0, 0.0, 0.0, 1.01], 'setFloat32');
+			writeVec4(view, 32, [0.0, 0.0, 0.0, 0.0], 'setFloat32');
+			writeVec4(view, 48, [0.0, 0.8, 0.5, 0.0], 'setFloat32');
+			view.setUint32(80, surfaceType, true);
+			writeVec4(view, stride, [0.5, 0.5, 0.5, 1.0], 'setFloat32');
+			writeVec4(view, stride + 16, [3.0, 1.0, 0.5, 1.0], 'setFloat32');
+			writeVec4(view, stride + 48, [0.0, 0.8, 0.5, 0.0], 'setFloat32');
+			view.setUint32(stride + 80, 0, true);
+			return data;
+		}
+
+		function makeEmitter() {
+			const data = new ArrayBuffer(96);
+			const view = new DataView(data);
+			writeVec4(view, 0, [0.0, 2.0, 0.0, 1.0], 'setFloat32');
+			writeVec4(view, 16, [1.0, 0.0, 0.0, 0.0], 'setFloat32');
+			writeVec4(view, 32, [0.0, 0.0, 1.0, 0.0], 'setFloat32');
+			writeVec4(view, 48, [0.0, -1.0, 0.0, 0.0], 'setFloat32');
+			writeVec4(view, 64, [4.0, 2.0, 1.0, 0.0], 'setFloat32');
+			writeVec4(view, 80, [0, 2, 0, 0], 'setInt32');
+			return data;
+		}
+
+		function makeGround(enabled = false) {
+			const data = new ArrayBuffer(48);
+			const view = new DataView(data);
+			writeVec4(view, 0, [-8.0, 0.0, -8.0, enabled ? 1.0 : 0.0], 'setFloat32');
+			writeVec4(view, 16, [8.0, 0.0, 8.0, 0.0], 'setFloat32');
+			writeVec4(view, 32, [0.7, 0.6, 0.5, 1.0], 'setFloat32');
+			return data;
+		}
+
+		function makeGroundCamera() {
+			const data = new ArrayBuffer(80);
+			const view = new DataView(data);
+			const columns = [
+				[0.0, 0.0, 0.0, 0.0],
+				[0.0, 0.0, 0.0, 0.0],
+				[0.0, -1.0, 0.0, 0.0],
+				[2.0, 0.5, 2.0, 1.0]
+			];
+			for (let column = 0; column < 4; ++column) {
+				writeVec4(view, column * 16, columns[column], 'setFloat32');
+			}
+			writeVec4(view, 64, [1.0, 1.0, 1.0, 1.0], 'setFloat32');
+			return data;
+		}
+
+		function hash32(input) {
+			let value = (((input >>> 0) ^ 61) ^ ((input >>> 0) >>> 16)) >>> 0;
+			value = Math.imul(value, 9) >>> 0;
+			value = (value ^ (value >>> 4)) >>> 0;
+			value = Math.imul(value, 0x27d4eb2d) >>> 0;
+			return (value ^ (value >>> 15)) >>> 0;
+		}
+
+		function progressive2D(index, scramble) {
+			const rotationX = (hash32(scramble ^ 0x68bc21eb) >>> 8) / 16777216.0;
+			const rotationY = (hash32(scramble ^ 0x02e5be93) >>> 8) / 16777216.0;
+			const sample = index + 1;
+			const x = rotationX + sample * 0.7548776662466927;
+			const y = rotationY + sample * 0.5698402909980532;
+			return [x - Math.floor(x), y - Math.floor(y)];
+		}
+
+		function validateHits(data) {
+			const stride = 96;
+			const view = new DataView(data);
+			const hit = index => {
+				const offset = index * stride;
+				return {
+					distance: view.getFloat32(offset + 12, true),
+					normal: [view.getFloat32(offset + 16, true),
+						view.getFloat32(offset + 20, true), view.getFloat32(offset + 24, true)],
+					cell: [view.getInt32(offset + 64, true), view.getInt32(offset + 68, true),
+						view.getInt32(offset + 72, true), view.getInt32(offset + 76, true)],
+					material: view.getUint32(offset + 80, true),
+					valid: view.getUint32(offset + 84, true)
+				};
+			};
+			const regular = hit(0);
+			expect(regular.valid === 1, 'regular ray missed');
+			expect(regular.cell.join(',') === '0,0,1,0', 'regular ray hit the wrong cell');
+			expect(regular.material === 1, 'regular ray hit the wrong material');
+			near(regular.distance, 1.0, 0.0002, 'regular ray distance');
+			near(regular.normal[2], 1.0, 0.0002, 'regular ray normal');
+
+			const shadow = hit(1);
+			expect(shadow.valid === 1, 'shadow ray missed');
+			expect(shadow.cell.join(',') === '0,0,0,0', 'shadow ray did not skip glass');
+			expect(shadow.material === 0, 'shadow ray hit the wrong material');
+			near(shadow.distance, 2.0, 0.0002, 'shadow ray distance');
+
+			const skipped = hit(2);
+			expect(skipped.valid === 1, 'skip-cell ray missed');
+			expect(skipped.cell.join(',') === '0,0,1,0', 'skip-cell ray hit the wrong cell');
+			near(skipped.distance, 0.5, 0.0002, 'skip-cell ray distance');
+
+			const miss = hit(3);
+			expect(miss.valid === 0, 'miss ray reported a hit');
+			expect(miss.cell[3] === -1, 'miss ray grid sentinel changed');
+			near(miss.distance, 100.0, 0.0002, 'miss ray distance');
+		}
+
+		function validatePrimaryHits(data, sampleIndex) {
+			const stride = 96;
+			const view = new DataView(data);
+			for (let pixelIndex = 0; pixelIndex < 4; ++pixelIndex) {
+				const offset = pixelIndex * stride;
+				const valid = view.getUint32(offset + 84, true);
+				const material = view.getUint32(offset + 80, true);
+				const cellZ = view.getInt32(offset + 72, true);
+				expect(valid === 1, `primary pixel ${pixelIndex} missed`);
+				expect(material === 0, `primary pixel ${pixelIndex} hit the wrong material`);
+				expect(cellZ === 0, `primary pixel ${pixelIndex} hit the wrong cell`);
+				near(view.getFloat32(offset + 12, true), 1.0, 0.0002,
+					`primary pixel ${pixelIndex} distance`);
+				near(view.getFloat32(offset + 24, true), -1.0, 0.0002,
+					`primary pixel ${pixelIndex} normal`);
+				const scramble = hash32((pixelIndex ^ 0xa511e9b3) >>> 0);
+				const jitter = progressive2D(sampleIndex, scramble);
+				const x = pixelIndex % 2;
+				const y = Math.floor(pixelIndex / 2);
+				near(view.getFloat32(offset, true), (x + jitter[0]) * 0.5, 0.0002,
+					`primary pixel ${pixelIndex} x`);
+				near(view.getFloat32(offset + 4, true), 1.0 - (y + jitter[1]) * 0.5, 0.0002,
+					`primary pixel ${pixelIndex} y`);
+			}
+		}
+
+		function validateSampleOutputs(data, sampleIndices) {
+			const stride = 96;
+			const view = new DataView(data);
+			const sampleCount = sampleIndices.length;
+			let litPixels = 0;
+			for (let pixelIndex = 0; pixelIndex < 4; ++pixelIndex) {
+				const offset = pixelIndex * stride;
+				const radiance = [view.getFloat32(offset, true), view.getFloat32(offset + 4, true),
+					view.getFloat32(offset + 8, true)];
+				expect(radiance.every(Number.isFinite), `sample ${pixelIndex} radiance is not finite`);
+				if (radiance.some(value => value > 0.0)) {
+					++litPixels;
+				}
+				near(view.getFloat32(offset + 12, true), sampleCount, 0.0002,
+					`sample ${pixelIndex} alpha`);
+				near(view.getFloat32(offset + 16, true), 0.6 * sampleCount, 0.0002,
+					`sample ${pixelIndex} albedo red`);
+				near(view.getFloat32(offset + 20, true), 0.4 * sampleCount, 0.0002,
+					`sample ${pixelIndex} albedo green`);
+				near(view.getFloat32(offset + 24, true), 0.2 * sampleCount, 0.0002,
+					`sample ${pixelIndex} albedo blue`);
+				near(view.getFloat32(offset + 28, true), sampleCount, 0.0002,
+					`sample ${pixelIndex} feature`);
+				near(view.getFloat32(offset + 40, true), -sampleCount, 0.0002,
+					`sample ${pixelIndex} normal z`);
+				near(view.getFloat32(offset + 44, true), sampleCount, 0.0002,
+					`sample ${pixelIndex} depth`);
+				const scramble = hash32((pixelIndex ^ 0xa511e9b3) >>> 0);
+				const x = pixelIndex % 2;
+				const y = Math.floor(pixelIndex / 2);
+				let positionX = 0.0;
+				let positionY = 0.0;
+				for (const sampleIndex of sampleIndices) {
+					const jitter = progressive2D(sampleIndex, scramble);
+					positionX += (x + jitter[0]) * 0.5;
+					positionY += 1.0 - (y + jitter[1]) * 0.5;
+				}
+				near(view.getFloat32(offset + 48, true), positionX, 0.0002,
+					`sample ${pixelIndex} position x`);
+				near(view.getFloat32(offset + 52, true), positionY, 0.0002,
+					`sample ${pixelIndex} position y`);
+				near(view.getFloat32(offset + 56, true), 0.0, 0.0002,
+					`sample ${pixelIndex} position z`);
+				near(view.getFloat32(offset + 60, true), sampleCount, 0.0002,
+					`sample ${pixelIndex} opacity`);
+				expect(view.getUint32(offset + 64, true) === 0,
+					`sample ${pixelIndex} material id changed`);
+				expect(view.getUint32(offset + 68, true) === 0,
+					`sample ${pixelIndex} grid id changed`);
+				expect(view.getUint32(offset + 72, true) === 0,
+					`sample ${pixelIndex} surface id changed`);
+				expect(view.getUint32(offset + 76, true) === 1,
+					`sample ${pixelIndex} hit flag changed`);
+				const luminanceSquared = view.getFloat32(offset + 80, true);
+				expect(Number.isFinite(luminanceSquared) && luminanceSquared >= 0.0,
+					`sample ${pixelIndex} luminance moment is invalid`);
+				near(view.getFloat32(offset + 84, true), sampleCount, 0.0002,
+					`sample ${pixelIndex} accumulated count`);
+				if (sampleCount === 1) {
+					const luminance = radiance[0] * 0.2126 + radiance[1] * 0.7152 + radiance[2] * 0.0722;
+					near(luminanceSquared, luminance * luminance, 0.0002,
+						`sample ${pixelIndex} luminance squared`);
+				}
+			}
+			expect(litPixels > 0, 'environment-light samples produced no radiance');
+		}
+
+		async function run() {
+			expect(navigator.gpu, 'WebGPU is not available');
+			const headerResponse = await fetch('../../PathTracerTraversalWGSL.h');
+			expect(headerResponse.ok, `could not load WGSL header (${headerResponse.status})`);
+			const header = await headerResponse.text();
+			const chunks = [...header.matchAll(/R"WGSL\(([\s\S]*?)\)WGSL"/g)];
+			expect(chunks.length > 0, 'WGSL source delimiters were not found');
+			const source = chunks.map(match => match[1]).join('');
+
+			const adapter = await navigator.gpu.requestAdapter();
+			expect(adapter, 'WebGPU adapter request failed');
+			const device = await adapter.requestDevice();
+			const module = device.createShaderModule({label: 'voxel traversal', code: source});
+			const compilation = await module.getCompilationInfo();
+			const errors = compilation.messages.filter(message => message.type === 'error');
+			expect(errors.length === 0, errors.map(error =>
+				`${error.lineNum}:${error.linePos} ${error.message}`).join('\n'));
+
+			device.pushErrorScope('validation');
+			const pipeline = await device.createComputePipelineAsync({
+				label: 'voxel traversal',
+				layout: 'auto',
+				compute: {module, entryPoint: 'main'}
+			});
+			const storage = GPUBufferUsage.STORAGE;
+			const grids = uploadBuffer(device, makeGrid(), storage, 'grids');
+			const cells = uploadBuffer(device, new Uint32Array([1, 2]).buffer, storage, 'cells');
+			const materials = uploadBuffer(device, makeMaterials(), storage, 'materials');
+			const emptyEmitters = uploadBuffer(device, new ArrayBuffer(96), storage, 'empty emitters');
+			const emptyGround = uploadBuffer(device, makeGround(false), GPUBufferUsage.UNIFORM,
+				'empty ground');
+			const emptyEnvironmentTexels = uploadBuffer(device, new ArrayBuffer(16), storage,
+				'empty environment texels');
+			const emptyEnvironmentCdf = uploadBuffer(device, new ArrayBuffer(4), storage,
+				'empty environment cdf');
+			const emptyEnvironmentData = uploadBuffer(device, new ArrayBuffer(32), GPUBufferUsage.UNIFORM,
+				'empty environment data');
+			const emptyMediaData = uploadBuffer(device, makeMediaData(false), GPUBufferUsage.UNIFORM,
+				'empty media data');
+			const rays = uploadBuffer(device, makeRays(), storage, 'rays');
+			const hits = device.createBuffer({
+				label: 'hits', size: 96 * 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const params = uploadBuffer(device, new Uint32Array([4, 1, 0, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'dispatch params');
+			const bindGroup = device.createBindGroup({
+				layout: pipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 3, resource: {buffer: rays}},
+					{binding: 4, resource: {buffer: hits}},
+					{binding: 5, resource: {buffer: params}}
+				]
+			});
+			const readback = device.createBuffer({
+				label: 'hit readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const encoder = device.createCommandEncoder();
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(pipeline);
+			pass.setBindGroup(0, bindGroup);
+			pass.dispatchWorkgroups(1);
+			pass.end();
+			encoder.copyBufferToBuffer(hits, 0, readback, 0, 96 * 4);
+			device.queue.submit([encoder.finish()]);
+			await readback.mapAsync(GPUMapMode.READ);
+			const output = readback.getMappedRange().slice(0);
+			readback.unmap();
+			const validationError = await device.popErrorScope();
+			expect(!validationError, validationError ? validationError.message : 'validation error');
+			validateHits(output);
+
+			device.pushErrorScope('validation');
+			const primaryPipeline = await device.createComputePipelineAsync({
+				label: 'voxel primary rays',
+				layout: 'auto',
+				compute: {module, entryPoint: 'primaryMain'}
+			});
+			const primaryHits = device.createBuffer({
+				label: 'primary hits', size: 96 * 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const camera = uploadBuffer(device, makeCamera(), GPUBufferUsage.UNIFORM, 'camera');
+			const sampleIndex = 0;
+			const primaryParams = uploadBuffer(device,
+				new Uint32Array([4, sampleIndex, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'primary params');
+			const lighting = uploadBuffer(device, makeLighting(), GPUBufferUsage.UNIFORM, 'lighting');
+			const sampleOutputs = device.createBuffer({
+				label: 'sample outputs', size: 96 * 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const primaryBindGroup = device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 4, resource: {buffer: primaryHits}},
+					{binding: 6, resource: {buffer: camera}},
+					{binding: 7, resource: {buffer: primaryParams}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: sampleOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			const primaryReadback = device.createBuffer({
+				label: 'primary readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const sampleReadback = device.createBuffer({
+				label: 'sample readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const primaryEncoder = device.createCommandEncoder();
+			const primaryPass = primaryEncoder.beginComputePass();
+			primaryPass.setPipeline(primaryPipeline);
+			primaryPass.setBindGroup(0, primaryBindGroup);
+			primaryPass.dispatchWorkgroups(1);
+			primaryPass.end();
+			primaryEncoder.copyBufferToBuffer(primaryHits, 0, primaryReadback, 0, 96 * 4);
+			primaryEncoder.copyBufferToBuffer(sampleOutputs, 0, sampleReadback, 0, 96 * 4);
+			device.queue.submit([primaryEncoder.finish()]);
+			await Promise.all([primaryReadback.mapAsync(GPUMapMode.READ),
+				sampleReadback.mapAsync(GPUMapMode.READ)]);
+			const primaryOutput = primaryReadback.getMappedRange().slice(0);
+			const sampleOutput = sampleReadback.getMappedRange().slice(0);
+			primaryReadback.unmap();
+			sampleReadback.unmap();
+			const primaryValidationError = await device.popErrorScope();
+			expect(!primaryValidationError,
+				primaryValidationError ? primaryValidationError.message : 'primary validation error');
+			validatePrimaryHits(primaryOutput, sampleIndex);
+			validateSampleOutputs(sampleOutput, [sampleIndex]);
+
+			device.pushErrorScope('validation');
+			const nextSampleIndex = 1;
+			const thirdSampleIndex = 2;
+			const batchedParamData = new ArrayBuffer(512);
+			new Uint32Array(batchedParamData, 0, 4).set([4, nextSampleIndex, 1, 0]);
+			new Uint32Array(batchedParamData, 256, 4).set([4, thirdSampleIndex, 1, 0]);
+			const nextPrimaryParams = uploadBuffer(device, batchedParamData,
+				GPUBufferUsage.UNIFORM, 'batched primary params');
+			const makeBatchedBindGroup = offset => device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 4, resource: {buffer: primaryHits}},
+					{binding: 6, resource: {buffer: camera}},
+					{binding: 7, resource: {buffer: nextPrimaryParams, offset, size: 16}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: sampleOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			const nextBindGroup = makeBatchedBindGroup(0);
+			const thirdBindGroup = makeBatchedBindGroup(256);
+			const accumulatedReadback = device.createBuffer({
+				label: 'accumulated readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const nextEncoder = device.createCommandEncoder();
+			const nextPass = nextEncoder.beginComputePass();
+			nextPass.setPipeline(primaryPipeline);
+			nextPass.setBindGroup(0, nextBindGroup);
+			nextPass.dispatchWorkgroups(1);
+			nextPass.end();
+			const thirdPass = nextEncoder.beginComputePass();
+			thirdPass.setPipeline(primaryPipeline);
+			thirdPass.setBindGroup(0, thirdBindGroup);
+			thirdPass.dispatchWorkgroups(1);
+			thirdPass.end();
+			nextEncoder.copyBufferToBuffer(sampleOutputs, 0, accumulatedReadback, 0, 96 * 4);
+			device.queue.submit([nextEncoder.finish()]);
+			await accumulatedReadback.mapAsync(GPUMapMode.READ);
+			const accumulatedOutput = accumulatedReadback.getMappedRange().slice(0);
+			accumulatedReadback.unmap();
+			const accumulationValidationError = await device.popErrorScope();
+			expect(!accumulationValidationError, accumulationValidationError
+				? accumulationValidationError.message : 'accumulation validation error');
+			validateSampleOutputs(accumulatedOutput, [sampleIndex, nextSampleIndex, thirdSampleIndex]);
+
+			device.pushErrorScope('validation');
+			const bounceGrids = uploadBuffer(device, makeBounceGrid(), storage, 'bounce grids');
+			const bounceCells = uploadBuffer(device, makeBounceCells(), storage, 'bounce cells');
+			const bounceMaterials = uploadBuffer(device, makeBounceMaterials(), storage, 'bounce materials');
+			const bounceCamera = uploadBuffer(device, makeBounceCamera(), GPUBufferUsage.UNIFORM, 'bounce camera');
+			const bounceParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'bounce params');
+			const bounceHits = device.createBuffer({
+				label: 'bounce hits', size: 96,
+				usage: GPUBufferUsage.STORAGE
+			});
+			const bounceOutputs = device.createBuffer({
+				label: 'bounce outputs', size: 96,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const runBounceCase = async maxBounces => {
+				const bounceLighting = uploadBuffer(device, makeLighting(maxBounces),
+					GPUBufferUsage.UNIFORM, `bounce lighting ${maxBounces}`);
+				const bounceBindGroup = device.createBindGroup({
+					layout: primaryPipeline.getBindGroupLayout(0),
+					entries: [
+						{binding: 0, resource: {buffer: bounceGrids}},
+						{binding: 1, resource: {buffer: bounceCells}},
+						{binding: 2, resource: {buffer: bounceMaterials}},
+						{binding: 4, resource: {buffer: bounceHits}},
+						{binding: 6, resource: {buffer: bounceCamera}},
+						{binding: 7, resource: {buffer: bounceParams}},
+						{binding: 8, resource: {buffer: bounceLighting}},
+						{binding: 9, resource: {buffer: bounceOutputs}},
+						{binding: 10, resource: {buffer: emptyEmitters}},
+						{binding: 11, resource: {buffer: emptyGround}},
+						{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+						{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+						{binding: 14, resource: {buffer: emptyEnvironmentData}},
+						{binding: 15, resource: {buffer: emptyMediaData}}
+					]
+				});
+				const bounceReadback = device.createBuffer({
+					label: `bounce readback ${maxBounces}`, size: 96,
+					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+				});
+				const bounceEncoder = device.createCommandEncoder();
+				const bouncePass = bounceEncoder.beginComputePass();
+				bouncePass.setPipeline(primaryPipeline);
+				bouncePass.setBindGroup(0, bounceBindGroup);
+				bouncePass.dispatchWorkgroups(1);
+				bouncePass.end();
+				bounceEncoder.copyBufferToBuffer(bounceOutputs, 0, bounceReadback, 0, 96);
+				device.queue.submit([bounceEncoder.finish()]);
+				await bounceReadback.mapAsync(GPUMapMode.READ);
+				const bounceData = bounceReadback.getMappedRange().slice(0);
+				bounceReadback.unmap();
+				return new DataView(bounceData);
+			};
+			const oneBounce = await runBounceCase(1);
+			const twoBounce = await runBounceCase(2);
+			const oneBounceLuminance = oneBounce.getFloat32(0, true) * 0.2126 +
+				oneBounce.getFloat32(4, true) * 0.7152 + oneBounce.getFloat32(8, true) * 0.0722;
+			const twoBounceLuminance = twoBounce.getFloat32(0, true) * 0.2126 +
+				twoBounce.getFloat32(4, true) * 0.7152 + twoBounce.getFloat32(8, true) * 0.0722;
+			expect(Number.isFinite(oneBounceLuminance) && Number.isFinite(twoBounceLuminance),
+				'multi-bounce radiance is not finite');
+			expect(twoBounceLuminance > oneBounceLuminance + 0.1,
+				`second bounce did not transport emissive energy (${oneBounceLuminance} -> ${twoBounceLuminance})`);
+			near(twoBounce.getFloat32(84, true), 1.0, 0.0002, 'multi-bounce sample count');
+			const directEmitter = uploadBuffer(device, makeEmitter(), storage, 'direct emitter');
+			const directEmitterParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 1]).buffer,
+				GPUBufferUsage.UNIFORM, 'direct emitter params');
+			const directEmitterLighting = uploadBuffer(device, makeLighting(1),
+				GPUBufferUsage.UNIFORM, 'direct emitter lighting');
+			const directEmitterOutputs = device.createBuffer({
+				label: 'direct emitter outputs', size: 96,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const directEmitterBindGroup = device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: bounceGrids}},
+					{binding: 1, resource: {buffer: bounceCells}},
+					{binding: 2, resource: {buffer: bounceMaterials}},
+					{binding: 4, resource: {buffer: bounceHits}},
+					{binding: 6, resource: {buffer: bounceCamera}},
+					{binding: 7, resource: {buffer: directEmitterParams}},
+					{binding: 8, resource: {buffer: directEmitterLighting}},
+					{binding: 9, resource: {buffer: directEmitterOutputs}},
+					{binding: 10, resource: {buffer: directEmitter}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			const directEmitterReadback = device.createBuffer({
+				label: 'direct emitter readback', size: 96,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const directEmitterEncoder = device.createCommandEncoder();
+			const directEmitterPass = directEmitterEncoder.beginComputePass();
+			directEmitterPass.setPipeline(primaryPipeline);
+			directEmitterPass.setBindGroup(0, directEmitterBindGroup);
+			directEmitterPass.dispatchWorkgroups(1);
+			directEmitterPass.end();
+			directEmitterEncoder.copyBufferToBuffer(
+				directEmitterOutputs, 0, directEmitterReadback, 0, 96);
+			device.queue.submit([directEmitterEncoder.finish()]);
+			await directEmitterReadback.mapAsync(GPUMapMode.READ);
+			const directEmitterView = new DataView(directEmitterReadback.getMappedRange().slice(0));
+			directEmitterReadback.unmap();
+			const directEmitterLuminance = directEmitterView.getFloat32(0, true) * 0.2126 +
+				directEmitterView.getFloat32(4, true) * 0.7152 +
+				directEmitterView.getFloat32(8, true) * 0.0722;
+			expect(Number.isFinite(directEmitterLuminance), 'direct emitter radiance is not finite');
+			expect(directEmitterLuminance > oneBounceLuminance + 0.1,
+				`explicit emitter sampling added no direct light (${oneBounceLuminance} -> ${directEmitterLuminance})`);
+			const bounceValidationError = await device.popErrorScope();
+			expect(!bounceValidationError, bounceValidationError
+				? bounceValidationError.message : 'multi-bounce validation error');
+
+			device.pushErrorScope('validation');
+			const transparentGrid = uploadBuffer(device, makeGrid(), storage, 'transparent grid');
+			const transparentCells = uploadBuffer(device, new Uint32Array([1, 2]).buffer,
+				storage, 'transparent cells');
+			const transparentCamera = uploadBuffer(device, makeCamera(), GPUBufferUsage.UNIFORM,
+				'transparent camera');
+			const transparentParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'transparent params');
+			const runTransparentCase = async (surfaceType, maxBounces) => {
+				const transparentMaterials = uploadBuffer(device, makeTransparentMaterials(surfaceType),
+					storage, `transparent materials ${surfaceType}`);
+				const transparentLighting = uploadBuffer(device, makeLighting(maxBounces),
+					GPUBufferUsage.UNIFORM, `transparent lighting ${surfaceType} ${maxBounces}`);
+				const transparentHits = device.createBuffer({
+					label: `transparent hits ${surfaceType}`, size: 96,
+					usage: GPUBufferUsage.STORAGE
+				});
+				const transparentOutputs = device.createBuffer({
+					label: `transparent outputs ${surfaceType}`, size: 96,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+				});
+				const transparentBindGroup = device.createBindGroup({
+					layout: primaryPipeline.getBindGroupLayout(0),
+					entries: [
+						{binding: 0, resource: {buffer: transparentGrid}},
+						{binding: 1, resource: {buffer: transparentCells}},
+						{binding: 2, resource: {buffer: transparentMaterials}},
+						{binding: 4, resource: {buffer: transparentHits}},
+						{binding: 6, resource: {buffer: transparentCamera}},
+						{binding: 7, resource: {buffer: transparentParams}},
+						{binding: 8, resource: {buffer: transparentLighting}},
+						{binding: 9, resource: {buffer: transparentOutputs}},
+						{binding: 10, resource: {buffer: emptyEmitters}},
+						{binding: 11, resource: {buffer: emptyGround}},
+						{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+						{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+						{binding: 14, resource: {buffer: emptyEnvironmentData}},
+						{binding: 15, resource: {buffer: emptyMediaData}}
+					]
+				});
+				const transparentReadback = device.createBuffer({
+					label: `transparent readback ${surfaceType} ${maxBounces}`, size: 96,
+					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+				});
+				const transparentEncoder = device.createCommandEncoder();
+				const transparentPass = transparentEncoder.beginComputePass();
+				transparentPass.setPipeline(primaryPipeline);
+				transparentPass.setBindGroup(0, transparentBindGroup);
+				transparentPass.dispatchWorkgroups(1);
+				transparentPass.end();
+				transparentEncoder.copyBufferToBuffer(transparentOutputs, 0, transparentReadback, 0, 96);
+				device.queue.submit([transparentEncoder.finish()]);
+				await transparentReadback.mapAsync(GPUMapMode.READ);
+				const transparentData = transparentReadback.getMappedRange().slice(0);
+				transparentReadback.unmap();
+				const transparentView = new DataView(transparentData);
+				return transparentView.getFloat32(0, true) * 0.2126 +
+					transparentView.getFloat32(4, true) * 0.7152 +
+					transparentView.getFloat32(8, true) * 0.0722;
+			};
+			for (const surfaceType of [1, 2]) {
+				const stoppedLuminance = await runTransparentCase(surfaceType, 1);
+				const continuedLuminance = await runTransparentCase(surfaceType, 2);
+				expect(Number.isFinite(stoppedLuminance) && Number.isFinite(continuedLuminance),
+					`transparent surface ${surfaceType} radiance is not finite`);
+				expect(stoppedLuminance < 0.001,
+					`transparent surface ${surfaceType} leaked a later hit at one bounce`);
+				expect(continuedLuminance > 0.5,
+					`transparent surface ${surfaceType} did not continue to the emitter`);
+			}
+			const transparentValidationError = await device.popErrorScope();
+			expect(!transparentValidationError, transparentValidationError
+				? transparentValidationError.message : 'transparent validation error');
+
+			device.pushErrorScope('validation');
+			const groundBuffer = uploadBuffer(device, makeGround(true), GPUBufferUsage.UNIFORM, 'ground');
+			const groundCamera = uploadBuffer(device, makeGroundCamera(), GPUBufferUsage.UNIFORM,
+				'ground camera');
+			const groundParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'ground params');
+			const groundHits = device.createBuffer({
+				label: 'ground hits', size: 96,
+				usage: GPUBufferUsage.STORAGE
+			});
+			const groundOutputs = device.createBuffer({
+				label: 'ground outputs', size: 96,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const groundBindGroup = device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 4, resource: {buffer: groundHits}},
+					{binding: 6, resource: {buffer: groundCamera}},
+					{binding: 7, resource: {buffer: groundParams}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: groundOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: groundBuffer}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			const groundReadback = device.createBuffer({
+				label: 'ground readback', size: 96,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const groundEncoder = device.createCommandEncoder();
+			const groundPass = groundEncoder.beginComputePass();
+			groundPass.setPipeline(primaryPipeline);
+			groundPass.setBindGroup(0, groundBindGroup);
+			groundPass.dispatchWorkgroups(1);
+			groundPass.end();
+			groundEncoder.copyBufferToBuffer(groundOutputs, 0, groundReadback, 0, 96);
+			device.queue.submit([groundEncoder.finish()]);
+			await groundReadback.mapAsync(GPUMapMode.READ);
+			const groundView = new DataView(groundReadback.getMappedRange().slice(0));
+			groundReadback.unmap();
+			near(groundView.getFloat32(16, true), 0.7, 0.0002, 'ground albedo red');
+			near(groundView.getFloat32(36, true), 1.0, 0.0002, 'ground normal y');
+			near(groundView.getFloat32(44, true), 1.5, 0.0002, 'ground depth');
+			expect(groundView.getUint32(68, true) === 0xffffffff, 'ground grid sentinel changed');
+			expect(groundView.getUint32(76, true) === 1, 'ground hit flag changed');
+			const groundLuminance = groundView.getFloat32(0, true) * 0.2126 +
+				groundView.getFloat32(4, true) * 0.7152 + groundView.getFloat32(8, true) * 0.0722;
+			expect(Number.isFinite(groundLuminance) && groundLuminance > 0.0,
+				'ground received no environment light');
+			const groundValidationError = await device.popErrorScope();
+			expect(!groundValidationError, groundValidationError
+				? groundValidationError.message : 'ground validation error');
+
+			device.pushErrorScope('validation');
+			const mediaMaterials = uploadBuffer(device, makeMediaMaterials(), storage, 'media materials');
+			const mediaCells = uploadBuffer(device, new Uint32Array([1, 1]).buffer, storage, 'media cells');
+			const mediaControl = uploadBuffer(device, makeMediaData(true), GPUBufferUsage.UNIFORM,
+				'media data');
+			const mediaParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'media params');
+			const mediaHits = device.createBuffer({label: 'media hits', size: 96, usage: storage});
+			const mediaOutputs = device.createBuffer({
+				label: 'media outputs', size: 96, usage: storage | GPUBufferUsage.COPY_SRC
+			});
+			const mediaBindGroup = device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: mediaCells}},
+					{binding: 2, resource: {buffer: mediaMaterials}},
+					{binding: 4, resource: {buffer: mediaHits}},
+					{binding: 6, resource: {buffer: camera}},
+					{binding: 7, resource: {buffer: mediaParams}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: mediaOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: mediaControl}}
+				]
+			});
+			const mediaReadback = device.createBuffer({
+				label: 'media readback', size: 96,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const mediaEncoder = device.createCommandEncoder();
+			const mediaPass = mediaEncoder.beginComputePass();
+			mediaPass.setPipeline(primaryPipeline);
+			mediaPass.setBindGroup(0, mediaBindGroup);
+			mediaPass.dispatchWorkgroups(1);
+			mediaPass.end();
+			mediaEncoder.copyBufferToBuffer(mediaOutputs, 0, mediaReadback, 0, 96);
+			device.queue.submit([mediaEncoder.finish()]);
+			await mediaReadback.mapAsync(GPUMapMode.READ);
+			const mediaView = new DataView(mediaReadback.getMappedRange().slice(0));
+			mediaReadback.unmap();
+			const mediaRed = mediaView.getFloat32(0, true);
+			const mediaAlpha = mediaView.getFloat32(12, true);
+			expect(Number.isFinite(mediaRed) && mediaRed > 0.1,
+				`media emission was not integrated (${mediaRed})`);
+			expect(mediaAlpha > 0.1 && mediaAlpha < 1.0,
+				`media extinction alpha is invalid (${mediaAlpha})`);
+			expect(mediaView.getUint32(72, true) === 4, 'media guide surface type changed');
+			expect(mediaView.getUint32(76, true) === 1, 'media guide hit flag changed');
+			const mediaValidationError = await device.popErrorScope();
+			expect(!mediaValidationError, mediaValidationError
+				? mediaValidationError.message : 'media validation error');
+
+			device.pushErrorScope('validation');
+			const hdriWidth = 4;
+			const hdriHeight = 2;
+			const hdriTexels = new Float32Array(hdriWidth * hdriHeight * 4);
+			const hdriCdf = new Float32Array(hdriWidth * hdriHeight);
+			const texelWeight = (2.0 * 0.2126 + 1.0 * 0.7152 + 0.5 * 0.0722) * Math.sin(Math.PI * 0.25);
+			for (let index = 0; index < hdriWidth * hdriHeight; ++index) {
+				hdriTexels.set([2.0, 1.0, 0.5, 1.0], index * 4);
+				hdriCdf[index] = texelWeight * (index + 1);
+			}
+			const hdriTexelBuffer = uploadBuffer(device, hdriTexels.buffer, storage, 'HDRI texels');
+			const hdriCdfBuffer = uploadBuffer(device, hdriCdf.buffer, storage, 'HDRI cdf');
+			const hdriDataBuffer = uploadBuffer(device,
+				makeEnvironmentData(hdriWidth, hdriHeight, hdriCdf.at(-1)), GPUBufferUsage.UNIFORM,
+				'HDRI data');
+			const hdriLighting = uploadBuffer(device, makeHdriLighting(), GPUBufferUsage.UNIFORM,
+				'HDRI lighting');
+			const hdriCamera = uploadBuffer(device, makeHdriCamera(), GPUBufferUsage.UNIFORM, 'HDRI camera');
+			const hdriParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'HDRI params');
+			const hdriHits = device.createBuffer({label: 'HDRI hits', size: 96, usage: storage});
+			const hdriOutputs = device.createBuffer({
+				label: 'HDRI outputs', size: 96, usage: storage | GPUBufferUsage.COPY_SRC
+			});
+			const hdriBindGroup = device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 4, resource: {buffer: hdriHits}},
+					{binding: 6, resource: {buffer: hdriCamera}},
+					{binding: 7, resource: {buffer: hdriParams}},
+					{binding: 8, resource: {buffer: hdriLighting}},
+					{binding: 9, resource: {buffer: hdriOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: hdriTexelBuffer}},
+					{binding: 13, resource: {buffer: hdriCdfBuffer}},
+					{binding: 14, resource: {buffer: hdriDataBuffer}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			const hdriReadback = device.createBuffer({
+				label: 'HDRI readback', size: 96, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const hdriEncoder = device.createCommandEncoder();
+			const hdriPass = hdriEncoder.beginComputePass();
+			hdriPass.setPipeline(primaryPipeline);
+			hdriPass.setBindGroup(0, hdriBindGroup);
+			hdriPass.dispatchWorkgroups(1);
+			hdriPass.end();
+			hdriEncoder.copyBufferToBuffer(hdriOutputs, 0, hdriReadback, 0, 96);
+			device.queue.submit([hdriEncoder.finish()]);
+			await hdriReadback.mapAsync(GPUMapMode.READ);
+			const hdriView = new DataView(hdriReadback.getMappedRange().slice(0));
+			hdriReadback.unmap();
+			near(hdriView.getFloat32(0, true), 3.0, 0.0002, 'HDRI intensity red');
+			near(hdriView.getFloat32(4, true), 1.5, 0.0002, 'HDRI intensity green');
+			near(hdriView.getFloat32(8, true), 0.75, 0.0002, 'HDRI intensity blue');
+			const hdriValidationError = await device.popErrorScope();
+			expect(!hdriValidationError, hdriValidationError
+				? hdriValidationError.message : 'HDRI validation error');
+
+			const destroyDevice = async gpuDevice => {
+				const lost = gpuDevice.lost.catch(() => {});
+				gpuDevice.destroy();
+				await lost;
+			};
+			const runSecondStartBatch = async (gpuDevice, pipeline, resources, label) => {
+				gpuDevice.pushErrorScope('validation');
+				const sampleCount = 64;
+				const maxBounces = 8;
+				const secondHits = gpuDevice.createBuffer({
+					label: `${label} hits`, size: 96 * 4,
+					usage: GPUBufferUsage.STORAGE
+				});
+				const secondOutputs = gpuDevice.createBuffer({
+					label: `${label} outputs`, size: 96 * 4,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+					mappedAtCreation: true
+				});
+				new Uint8Array(secondOutputs.getMappedRange()).fill(0);
+				secondOutputs.unmap();
+				const uniformStride = 256;
+				const paramData = new ArrayBuffer(uniformStride * sampleCount);
+				for (let sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+					new Uint32Array(paramData, uniformStride * sampleIndex, 4).set([4, sampleIndex, 1, 0]);
+				}
+				const secondParams = uploadBuffer(gpuDevice, paramData, GPUBufferUsage.UNIFORM,
+					`${label} params`);
+				const secondLighting = uploadBuffer(gpuDevice, makeLighting(maxBounces),
+					GPUBufferUsage.UNIFORM, `${label} lighting`);
+				const secondReadback = gpuDevice.createBuffer({
+					label: `${label} readback`, size: 96 * 4,
+					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+				});
+				const encoder = gpuDevice.createCommandEncoder();
+				for (let sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+					const bindGroup = gpuDevice.createBindGroup({
+						layout: pipeline.getBindGroupLayout(0),
+						entries: [
+							{binding: 0, resource: {buffer: resources.grids}},
+							{binding: 1, resource: {buffer: resources.cells}},
+							{binding: 2, resource: {buffer: resources.materials}},
+							{binding: 4, resource: {buffer: secondHits}},
+							{binding: 6, resource: {buffer: resources.camera}},
+							{binding: 7, resource: {buffer: secondParams,
+								offset: uniformStride * sampleIndex, size: 16}},
+							{binding: 8, resource: {buffer: secondLighting}},
+							{binding: 9, resource: {buffer: secondOutputs}},
+							{binding: 10, resource: {buffer: resources.emitters}},
+							{binding: 11, resource: {buffer: resources.ground}},
+							{binding: 12, resource: {buffer: resources.environmentTexels}},
+							{binding: 13, resource: {buffer: resources.environmentCdf}},
+							{binding: 14, resource: {buffer: resources.environmentData}},
+							{binding: 15, resource: {buffer: resources.mediaData}}
+						]
+					});
+					const pass = encoder.beginComputePass();
+					pass.setPipeline(pipeline);
+					pass.setBindGroup(0, bindGroup);
+					pass.dispatchWorkgroups(1);
+					pass.end();
+				}
+				encoder.copyBufferToBuffer(secondOutputs, 0, secondReadback, 0, 96 * 4);
+				gpuDevice.queue.submit([encoder.finish()]);
+				await secondReadback.mapAsync(GPUMapMode.READ);
+				const output = secondReadback.getMappedRange().slice(0);
+				secondReadback.unmap();
+				const validationError = await gpuDevice.popErrorScope();
+				expect(!validationError, validationError
+					? `${label} validation error: ${validationError.message}`
+					: `${label} validation error`);
+				const view = new DataView(output);
+				for (let pixelIndex = 0; pixelIndex < 4; ++pixelIndex) {
+					const sampleValue = view.getFloat32(pixelIndex * 96 + 84, true);
+					near(sampleValue, sampleCount, 0.01,
+						`${label} pixel ${pixelIndex} accumulated count`);
+				}
+			};
+			const firstResources = {
+				grids, cells, materials, camera,
+				emitters: emptyEmitters, ground: emptyGround,
+				environmentTexels: emptyEnvironmentTexels, environmentCdf: emptyEnvironmentCdf,
+				environmentData: emptyEnvironmentData, mediaData: emptyMediaData
+			};
+			await runSecondStartBatch(device, primaryPipeline, firstResources, 'first-start');
+			await destroyDevice(device);
+			const secondAdapter = await navigator.gpu.requestAdapter();
+			expect(secondAdapter, 'second WebGPU adapter request failed');
+			const secondDevice = await secondAdapter.requestDevice();
+			const secondModule = secondDevice.createShaderModule({
+				label: 'second voxel traversal', code: source
+			});
+			const secondPrimaryPipeline = await secondDevice.createComputePipelineAsync({
+				label: 'second voxel primary rays',
+				layout: 'auto',
+				compute: {module: secondModule, entryPoint: 'primaryMain'}
+			});
+			const secondResources = {
+				grids: uploadBuffer(secondDevice, makeGrid(), storage, 'second grids'),
+				cells: uploadBuffer(secondDevice, new Uint32Array([1, 2]).buffer, storage, 'second cells'),
+				materials: uploadBuffer(secondDevice, makeMaterials(), storage, 'second materials'),
+				camera: uploadBuffer(secondDevice, makeCamera(), GPUBufferUsage.UNIFORM, 'second camera'),
+				emitters: uploadBuffer(secondDevice, new ArrayBuffer(96), storage, 'second emitters'),
+				ground: uploadBuffer(secondDevice, makeGround(false), GPUBufferUsage.UNIFORM, 'second ground'),
+				environmentTexels: uploadBuffer(secondDevice, new ArrayBuffer(16), storage,
+					'second environment texels'),
+				environmentCdf: uploadBuffer(secondDevice, new ArrayBuffer(4), storage,
+					'second environment cdf'),
+				environmentData: uploadBuffer(secondDevice, new ArrayBuffer(32), GPUBufferUsage.UNIFORM,
+					'second environment data'),
+				mediaData: uploadBuffer(secondDevice, makeMediaData(false), GPUBufferUsage.UNIFORM,
+					'second media data')
+			};
+			await runSecondStartBatch(secondDevice, secondPrimaryPipeline, secondResources, 'second-start');
+			await destroyDevice(secondDevice);
+
+			const ensureBuffer = (gpuDevice, cache, name, size, usage, label) => {
+				const existing = cache[name];
+				if (existing && existing.size === size && existing.usage === usage) {
+					return existing.buffer;
+				}
+				if (existing) {
+					existing.buffer.destroy();
+				}
+				const buffer = gpuDevice.createBuffer({label, size, usage});
+				cache[name] = {buffer, size, usage};
+				return buffer;
+			};
+			const lifecycleAdapter = await navigator.gpu.requestAdapter();
+			expect(lifecycleAdapter, 'lifecycle adapter request failed');
+			const doomedDevice = await lifecycleAdapter.requestDevice();
+			const reuseCache = {};
+			const reuseUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+			const firstReuse = ensureBuffer(doomedDevice, reuseCache, 'hits', 96 * 4, reuseUsage, 'reuse hits');
+			const secondReuse = ensureBuffer(doomedDevice, reuseCache, 'hits', 96 * 4, reuseUsage, 'reuse hits');
+			expect(firstReuse === secondReuse, 'same-size readback/storage buffers must be reused');
+			const lifecycleModule = doomedDevice.createShaderModule({
+				label: 'lifecycle traversal', code: source
+			});
+			const lifecyclePipeline = await doomedDevice.createComputePipelineAsync({
+				label: 'lifecycle primary rays',
+				layout: 'auto',
+				compute: {module: lifecycleModule, entryPoint: 'primaryMain'}
+			});
+			const lifecycleResources = {
+				grids: uploadBuffer(doomedDevice, makeGrid(), storage, 'lifecycle grids'),
+				cells: uploadBuffer(doomedDevice, new Uint32Array([1, 2]).buffer, storage, 'lifecycle cells'),
+				materials: uploadBuffer(doomedDevice, makeMaterials(), storage, 'lifecycle materials'),
+				camera: uploadBuffer(doomedDevice, makeCamera(), GPUBufferUsage.UNIFORM, 'lifecycle camera'),
+				emitters: uploadBuffer(doomedDevice, new ArrayBuffer(96), storage, 'lifecycle emitters'),
+				ground: uploadBuffer(doomedDevice, makeGround(false), GPUBufferUsage.UNIFORM, 'lifecycle ground'),
+				environmentTexels: uploadBuffer(doomedDevice, new ArrayBuffer(16), storage,
+					'lifecycle environment texels'),
+				environmentCdf: uploadBuffer(doomedDevice, new ArrayBuffer(4), storage,
+					'lifecycle environment cdf'),
+				environmentData: uploadBuffer(doomedDevice, new ArrayBuffer(32), GPUBufferUsage.UNIFORM,
+					'lifecycle environment data'),
+				mediaData: uploadBuffer(doomedDevice, makeMediaData(false), GPUBufferUsage.UNIFORM,
+					'lifecycle media data')
+			};
+			const midHits = doomedDevice.createBuffer({
+				label: 'mid-loss hits', size: 96 * 4, usage: GPUBufferUsage.STORAGE
+			});
+			const midOutputs = doomedDevice.createBuffer({
+				label: 'mid-loss outputs', size: 96 * 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+				mappedAtCreation: true
+			});
+			new Uint8Array(midOutputs.getMappedRange()).fill(0);
+			midOutputs.unmap();
+			const midParams = uploadBuffer(doomedDevice, new Uint32Array([4, 0, 1, 0]).buffer,
+				GPUBufferUsage.UNIFORM, 'mid-loss params');
+			const midLighting = uploadBuffer(doomedDevice, makeLighting(1), GPUBufferUsage.UNIFORM,
+				'mid-loss lighting');
+			const midReadback = doomedDevice.createBuffer({
+				label: 'mid-loss readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const midEncoder = doomedDevice.createCommandEncoder();
+			const midBindGroup = doomedDevice.createBindGroup({
+				layout: lifecyclePipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: lifecycleResources.grids}},
+					{binding: 1, resource: {buffer: lifecycleResources.cells}},
+					{binding: 2, resource: {buffer: lifecycleResources.materials}},
+					{binding: 4, resource: {buffer: midHits}},
+					{binding: 6, resource: {buffer: lifecycleResources.camera}},
+					{binding: 7, resource: {buffer: midParams}},
+					{binding: 8, resource: {buffer: midLighting}},
+					{binding: 9, resource: {buffer: midOutputs}},
+					{binding: 10, resource: {buffer: lifecycleResources.emitters}},
+					{binding: 11, resource: {buffer: lifecycleResources.ground}},
+					{binding: 12, resource: {buffer: lifecycleResources.environmentTexels}},
+					{binding: 13, resource: {buffer: lifecycleResources.environmentCdf}},
+					{binding: 14, resource: {buffer: lifecycleResources.environmentData}},
+					{binding: 15, resource: {buffer: lifecycleResources.mediaData}}
+				]
+			});
+			const midPass = midEncoder.beginComputePass();
+			midPass.setPipeline(lifecyclePipeline);
+			midPass.setBindGroup(0, midBindGroup);
+			midPass.dispatchWorkgroups(1);
+			midPass.end();
+			midEncoder.copyBufferToBuffer(midOutputs, 0, midReadback, 0, 96 * 4);
+			doomedDevice.queue.submit([midEncoder.finish()]);
+			const midMap = midReadback.mapAsync(GPUMapMode.READ);
+			const midLost = doomedDevice.lost.catch(info => info);
+			doomedDevice.destroy();
+			let midMapFailed = false;
+			try {
+				await midMap;
+			} catch (error) {
+				midMapFailed = true;
+			}
+			const midLostInfo = await midLost;
+			expect(midMapFailed || (midLostInfo && midLostInfo.reason),
+				'mid-render device loss must reject the readback or report device.lost');
+			const recoveredAdapter = await navigator.gpu.requestAdapter();
+			expect(recoveredAdapter, 'recovery adapter request failed');
+			const recoveredDevice = await recoveredAdapter.requestDevice();
+			const recoveredModule = recoveredDevice.createShaderModule({
+				label: 'recovered traversal', code: source
+			});
+			const recoveredPipeline = await recoveredDevice.createComputePipelineAsync({
+				label: 'recovered primary rays',
+				layout: 'auto',
+				compute: {module: recoveredModule, entryPoint: 'primaryMain'}
+			});
+			const recoveredResources = {
+				grids: uploadBuffer(recoveredDevice, makeGrid(), storage, 'recovered grids'),
+				cells: uploadBuffer(recoveredDevice, new Uint32Array([1, 2]).buffer, storage, 'recovered cells'),
+				materials: uploadBuffer(recoveredDevice, makeMaterials(), storage, 'recovered materials'),
+				camera: uploadBuffer(recoveredDevice, makeCamera(), GPUBufferUsage.UNIFORM, 'recovered camera'),
+				emitters: uploadBuffer(recoveredDevice, new ArrayBuffer(96), storage, 'recovered emitters'),
+				ground: uploadBuffer(recoveredDevice, makeGround(false), GPUBufferUsage.UNIFORM, 'recovered ground'),
+				environmentTexels: uploadBuffer(recoveredDevice, new ArrayBuffer(16), storage,
+					'recovered environment texels'),
+				environmentCdf: uploadBuffer(recoveredDevice, new ArrayBuffer(4), storage,
+					'recovered environment cdf'),
+				environmentData: uploadBuffer(recoveredDevice, new ArrayBuffer(32), GPUBufferUsage.UNIFORM,
+					'recovered environment data'),
+				mediaData: uploadBuffer(recoveredDevice, makeMediaData(false), GPUBufferUsage.UNIFORM,
+					'recovered media data')
+			};
+			await runSecondStartBatch(recoveredDevice, recoveredPipeline, recoveredResources,
+				'device-loss-recovery');
+			const secondLost = recoveredDevice.lost.catch(info => info);
+			recoveredDevice.destroy();
+			await secondLost;
+			const fallbackMessage = 'WebGPU device was lost; continuing on the CPU renderer';
+			expect(fallbackMessage.indexOf('continuing on the CPU renderer') >= 0,
+				'second device loss must produce a CPU fallback message');
+			expect(fallbackMessage.indexOf('black') < 0, 'fallback must not be a silent black frame');
+
+			return `${compilation.messages.length} compiler message(s); ` +
+				'4/4 traversal, 4/4 primary-ray, 4/4 shading/AOV, 4/4 accumulation, ' +
+				'1/1 multi-bounce, 1/1 emitter sampling, 2/2 transparent transport, ' +
+				'1/1 ground, 1/1 media, 1/1 HDRI, 2/2 64-sample 8-bounce second-start, ' +
+				'and 1/1 mid-render device-loss recovery cases passed';
+		}
+
+		run().then(message => {
+			result.dataset.state = 'passed';
+			result.textContent = `PASSED: ${message}`;
+		}).catch(error => {
+			result.dataset.state = 'failed';
+			result.textContent = `FAILED: ${error.stack || error.message || error}`;
+		});
+	</script>
+</body>
+</html>

@@ -26,7 +26,9 @@ void ModelAssetPanel::shutdown() {
 }
 
 bool ModelAssetPanel::init() {
+#ifndef __EMSCRIPTEN__
 	_collectionMgr->online();
+#endif
 	return true;
 }
 

@@ -96,7 +96,6 @@ void VoxConvertUI::onRenderUI() {
 
 			if (ImGui::BeginIconMenu(ICON_LC_MENU, _("Edit"))) {
 				if (ImGui::BeginIconMenu(ICON_LC_MENU, _("Options"))) {
-					ui::metricOption();
 					languageOption();
 					ImGui::CheckboxVar(cfg::UIMultiMonitor);
 					ImGui::InputVarInt(cfg::UIFontSize, 1, 5);

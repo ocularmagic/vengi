@@ -21,7 +21,6 @@
 #include "core/Log.h"
 #include "core/StringUtil.h"
 #include "io/FormatDescription.h"
-#include "metric/MetricFacade.h"
 #include "palette/Palette.h"
 #include "palette/PaletteFormatDescription.h"
 #include "palette/PaletteView.h"
@@ -99,10 +98,6 @@ static bool loadPaletteInternal(const core::String &filename, io::SeekableReadSt
 		palette.setName(core::string::extractFilename(filename));
 		if (f->load(filename, stream, palette)) {
 			palette.markDirty();
-			const core::String &ext = core::string::extractExtension(filename);
-			if (!ext.empty()) {
-				metric::count("load", 1, {{"type", ext.toLower()}, {"palette", "true"}});
-			}
 			return true;
 		}
 		// even if case the load returned false, the palette could have been partially loaded
@@ -131,9 +126,6 @@ static bool savePaletteInternal(const PALETTE &palette, const core::String &file
 		if (core::SharedPtr<PaletteFormat> f = getFormat(*desc, 0u)) {
 			if (f->save(palette, filename, stream)) {
 				Log::debug("Saved file for format '%s' (ext: '%s')", desc->name.c_str(), ext.c_str());
-				if (!ext.empty()) {
-					metric::count("save", 1, {{"type", ext.toLower()}, {"palette", "true"}});
-				}
 				return true;
 			}
 			Log::error("Failed to save '%s' file", desc->name.c_str());
@@ -151,9 +143,6 @@ static bool savePaletteInternal(const PALETTE &palette, const core::String &file
 		if (core::SharedPtr<PaletteFormat> f = getFormat(*desc, 0u)) {
 			if (f->save(palette, filename, stream)) {
 				Log::debug("Saved file for format '%s' (ext: '%s')", desc->name.c_str(), ext.c_str());
-				if (!ext.empty()) {
-					metric::count("save", 1, {{"type", ext.toLower()}, {"palette", "true"}});
-				}
 				return true;
 			}
 			Log::error("Failed to save '%s' file", desc->name.c_str());

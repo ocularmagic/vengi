@@ -16,7 +16,6 @@ enum class OptionCategory : uint8_t {
 	UserInterface,
 	Editor,
 	Input,
-	Metrics,
 	Layout,
 	Display,
 	Rendering,
@@ -63,7 +62,6 @@ private:
 	void renderUserInterface();
 	void renderEditor();
 	void renderInput();
-	void renderMetrics();
 	void renderLayout();
 	void renderDisplay();
 	void renderRendering();

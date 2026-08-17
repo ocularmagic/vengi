@@ -595,6 +595,10 @@ function(engine_install_deps TARGET)
 			endif()
 		endforeach()
 	endif()
+
+	if (EMSCRIPTEN AND EXISTS "${CMAKE_BINARY_DIR}/${PROJECT_NAME}/docs")
+		target_link_options(${TARGET} PRIVATE "SHELL:--embed-file ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/docs@/docs")
+	endif()
 endfunction()
 
 macro(engine_resolve_deps_recursive TARGET OUT)

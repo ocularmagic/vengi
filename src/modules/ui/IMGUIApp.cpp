@@ -187,11 +187,7 @@ app::AppState IMGUIApp::onConstruct() {
 	_fileDialog.construct();
 	_lastDirectory = core::getVar(cfg::UILastDirectory);
 	_languageVar = core::getVar(cfg::CoreLanguage);
-	int uiStyleDefaultValue = ImGui::StyleCorporateGrey;
-	if (!isDarkMode()) {
-		uiStyleDefaultValue = ImGui::StyleLight;
-	}
-	const core::VarDef uIStyle(cfg::UIStyle, uiStyleDefaultValue, 0, (int)ImGui::MaxStyles - 1, N_("UI style"), N_("Change the ui colors - [0-4]"));
+	const core::VarDef uIStyle(cfg::UIStyle, ImGui::StyleStudio, 0, (int)ImGui::MaxStyles - 1, N_("UI style"), N_("Change the ui colors - [0-4]"));
 	_uistyle = core::Var::registerVar(uIStyle);
 	const core::VarDef uINotifyDismissMillis(cfg::UINotifyDismissMillis, 3000, N_("Notification timeout"), N_("Timeout for notifications in millis"));
 	core::Var::registerVar(uINotifyDismissMillis);

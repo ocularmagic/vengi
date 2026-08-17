@@ -2,12 +2,29 @@ set(LIB voxelpathtracer)
 set(SRCS
 	PathTracer.cpp PathTracer.h IPathTracer.h
 	PathTracerState.h
+	PathTracerSampling.h
+	PathTracerCamera.cpp PathTracerCamera.h
+	PathTracerPrimary.cpp PathTracerPrimary.h
+	PathTracerMaterial.h
+	PathTracerScene.h
+	PathTracerTraversal.cpp PathTracerTraversal.h
+	PathTracerTraversalWGSL.h
+	PathTracerWebGPU.cpp PathTracerWebGPU.h
+	Appearance.cpp Appearance.h
+	VoxelDDAPathTracer.cpp VoxelDDAPathTracer.h
 )
 
 engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES yocto voxelrender image io stb_image)
 
 set(TEST_SRCS
 	tests/PathTracerTest.cpp
+	tests/webgpu/PathTracerTraversalWebGPU.html
+	tests/webgpu/README.md
+)
+set_source_files_properties(
+	tests/webgpu/PathTracerTraversalWebGPU.html
+	tests/webgpu/README.md
+	PROPERTIES HEADER_FILE_ONLY TRUE
 )
 set(TEST_FILES
 	tests/hmec.vxl

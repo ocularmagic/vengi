@@ -16,7 +16,6 @@
 #include "scenegraph/SceneGraph.h"
 #include "io/FormatDescription.h"
 #include "io/Stream.h"
-#include "metric/MetricFacade.h"
 #include "palette/PaletteFormatDescription.h"
 #include "scenegraph/SceneGraphNode.h"
 #include "video/Texture.h"
@@ -445,10 +444,6 @@ bool loadFormat(const io::FileDescription &fileDesc, const io::ArchivePtr &archi
 	const uint64_t msEnd = timeProvider->systemMillis();
 	const uint64_t msDiff = msEnd - msStart;
 	Log::info("Load file %s with %i model nodes and %i point nodes (%ums)", filename.c_str(), models, points, (uint32_t)msDiff);
-	const core::String &ext = core::string::extractExtension(filename);
-	if (!ext.empty()) {
-		metric::count("load", 1, {{"type", ext.toLower()}});
-	}
 	return true;
 }
 
@@ -512,7 +507,6 @@ bool saveFormat(scenegraph::SceneGraph &sceneGraph, const core::String &filename
 				const uint64_t msEnd = timeProvider->systemMillis();
 				const uint64_t msDiff = msEnd - msStart;
 				Log::info("Saved file for format '%s' (ext: '%s') (%ums)", desc->name.c_str(), ext.c_str(), (uint32_t)msDiff);
-				metric::count("save", 1, {{"type", ext.toLower()}});
 				return true;
 			}
 			Log::error("Failed to save %s file", desc->name.c_str());
@@ -529,7 +523,6 @@ bool saveFormat(scenegraph::SceneGraph &sceneGraph, const core::String &filename
 				const uint64_t msEnd = timeProvider->systemMillis();
 				const uint64_t msDiff = msEnd - msStart;
 				Log::info("Saved file for format '%s' (ext: '%s') (%ums)", desc->name.c_str(), ext.c_str(), (uint32_t)msDiff);
-				metric::count("save", 1, {{"type", ext.toLower()}});
 				return true;
 			}
 			Log::error("Failed to save %s file", desc->name.c_str());

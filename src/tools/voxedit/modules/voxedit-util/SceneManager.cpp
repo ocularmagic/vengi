@@ -36,7 +36,6 @@
 #include "math/Axis.h"
 #include "math/Ray.h"
 #include "memento/MementoHandler.h"
-#include "metric/MetricFacade.h"
 #include "palette/Material.h"
 #include "palette/NormalPalette.h"
 #include "palette/Palette.h"
@@ -697,8 +696,6 @@ bool SceneManager::save(const io::FileDescription &file, bool autosave) {
 		if (!autosave) {
 			_dirty = false;
 			_lastFilename = file;
-			const core::String &ext = core::string::extractExtension(file.name);
-			metric::count("save", 1, {{"type", ext.toLower()}});
 			core::getVar(cfg::UIFileDialogLastFile)->setVal(file.name);
 		}
 		_needAutoSave = false;
@@ -3689,7 +3686,7 @@ void SceneManager::construct() {
 	core::Var::registerVar(voxEditShowBones);
 	const core::VarDef voxEditRendershadow(cfg::VoxEditRendershadow, false, N_("Render shadows"), N_("Render with shadows - make sure to set the scene lighting up properly"));
 	core::Var::registerVar(voxEditRendershadow);
-	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 1, 0, 3, N_("Shading mode"), N_("Shading mode: 0=Unlit (pure colors), 1=Lit (no shadows), 2=Shadows, 3=Studio"));
+	const core::VarDef voxEditShadingMode(cfg::VoxEditShadingMode, 3, 0, 3, N_("Shading mode"), N_("Shading mode: 0=Unlit (pure colors), 1=Lit (no shadows), 2=Shadows, 3=Studio"));
 	core::Var::registerVar(voxEditShadingMode);
 	const core::VarDef voxEditViewportColor(cfg::VoxEditViewportColor, "0 0 0 0", N_("Viewport color"),
 										   N_("Edit viewport clear color as r g b a. Alpha 0 keeps the UI background"));
@@ -3790,7 +3787,7 @@ void SceneManager::construct() {
 	core::Var::registerVar(voxEditShowNodeInspector);
 	const core::VarDef voxEditShowBrushes(cfg::VoxEditShowBrushes, true, N_("Brushes"), N_("Show the brushes and brush settings panels"));
 	core::Var::registerVar(voxEditShowBrushes);
-	const core::VarDef voxEditTipOftheDay(cfg::VoxEditTipOftheDay, true, N_("Tip of the day"), N_("Show the tip of the day on startup"));
+	const core::VarDef voxEditTipOftheDay(cfg::VoxEditTipOftheDay, false, N_("Tip of the day"), N_("Show the tip of the day on startup"));
 	core::Var::registerVar(voxEditTipOftheDay);
 	const core::VarDef voxEditPopupTipOfTheDay(cfg::VoxEditPopupTipOfTheDay, false, N_("Tip of the day popup"), N_("Trigger opening of opup"), core::CV_NOPERSIST);
 	core::Var::registerVar(voxEditPopupTipOfTheDay);
@@ -5403,7 +5400,9 @@ bool SceneManager::init() {
 		return false;
 	}
 	if (_soundManager->init()) {
+#ifndef __EMSCRIPTEN__
 		_chatSound = _soundManager->loadSound("chat-ping.wav");
+#endif
 	} else {
 		Log::warn("Failed to initialize the sound manager");
 	}
