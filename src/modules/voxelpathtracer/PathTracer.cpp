@@ -5,6 +5,7 @@
 #include "color/ColorUtil.h"
 #include "PathTracer.h"
 #include "Appearance.h"
+#include "PathTracerHdri.h"
 #include "color/Color.h"
 #include "core/Log.h"
 #include "core/StringUtil.h"
@@ -119,37 +120,17 @@ static void pushBevelQuad(yocto::shape_data &shape, const yocto::vec3f &c0, cons
 }
 
 static bool loadHdriTexture(const core::String &path, yocto::texture_data &texture) {
-	const core::String &resolvedPath = resolveHdriPath(path);
-	if (resolvedPath.empty()) {
-		Log::error("HDRI file not found: %s", path.c_str());
-		return false;
-	}
-	io::File file(resolvedPath, io::FileMode::SysRead);
-	void *buffer = nullptr;
-	const int len = file.read(&buffer);
-	if (len <= 0 || buffer == nullptr) {
-		Log::error("Failed to read HDRI file: %s", path.c_str());
-		delete[] (uint8_t *)buffer;
-		return false;
-	}
+	core::Buffer<float> rgba;
 	int width = 0;
 	int height = 0;
-	int components = 0;
-	float *pixels = stbi_loadf_from_memory((const stbi_uc *)buffer, len, &width, &height, &components, 4);
-	delete[] (uint8_t *)buffer;
-	if (pixels == nullptr || width <= 0 || height <= 0) {
-		Log::error("Failed to decode HDRI %s: %s", path.c_str(), stbi_failure_reason());
-		if (pixels != nullptr) {
-			stbi_image_free(pixels);
-		}
+	if (!pathTracerLoadHdriFloats(path, rgba, width, height)) {
 		return false;
 	}
 	yocto::image_data image = yocto::make_image(width, height, true);
 	const int count = width * height;
 	for (int i = 0; i < count; ++i) {
-		image.pixels[i] = {pixels[i * 4 + 0], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3]};
+		image.pixels[i] = {rgba[i * 4 + 0], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]};
 	}
-	stbi_image_free(pixels);
 	texture = yocto::image_to_texture(image);
 	return true;
 }

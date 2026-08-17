@@ -4,6 +4,7 @@
 
 #include "VoxelDDAPathTracer.h"
 #include "Appearance.h"
+#include "PathTracerHdri.h"
 #include "PathTracerSampling.h"
 #include "PathTracerTonemap.h"
 #include "PathTracerTraversal.h"
@@ -305,36 +306,9 @@ bool VoxelDDAPathTracer::loadHdri(const core::String &path) {
 	_envW = 0;
 	_envH = 0;
 	_envIsHdri = false;
-	const core::String &resolvedPath = resolveHdriPath(path);
-	if (resolvedPath.empty()) {
-		Log::error("HDRI file not found: %s", path.c_str());
+	if (!pathTracerLoadHdriFloats(path, _envRgba, _envW, _envH)) {
 		return false;
 	}
-	io::File file(resolvedPath, io::FileMode::SysRead);
-	void *buffer = nullptr;
-	const int len = file.read(&buffer);
-	if (len <= 0 || buffer == nullptr) {
-		Log::error("Failed to read HDRI file: %s", path.c_str());
-		delete[] (uint8_t *)buffer;
-		return false;
-	}
-	int width = 0;
-	int height = 0;
-	int components = 0;
-	float *pixels = stbi_loadf_from_memory((const stbi_uc *)buffer, len, &width, &height, &components, 4);
-	delete[] (uint8_t *)buffer;
-	if (pixels == nullptr || width <= 0 || height <= 0) {
-		Log::error("Failed to decode HDRI %s: %s", path.c_str(), stbi_failure_reason());
-		if (pixels != nullptr) {
-			stbi_image_free(pixels);
-		}
-		return false;
-	}
-	_envW = width;
-	_envH = height;
-	_envRgba.resize((size_t)width * (size_t)height * 4u);
-	core_memcpy(_envRgba.data(), pixels, (size_t)width * (size_t)height * 4u * sizeof(float));
-	stbi_image_free(pixels);
 	_envIsHdri = true;
 	buildEnvCdf();
 	return true;
