@@ -15,7 +15,7 @@ General:
    - Studio UI style and Studio (beveled cubes) shading are the defaults (`ui_style`, `ve_shadingmode`, `r_studiobevel`)
    - Added Studio view mode, Studio color theme, and beveled cube viewport display (`r_studiobevel`, `voxel_mergequads`, `ve_viewportcolor`)
    - Path tracer defaults to Studio wrap lighting (gray background) instead of a blue sun-sky; optional sky remains in Render settings
-   - Path tracer HDRI lighting (Radiance `.hdr`), ground plane shadows, and studio voxel edges; saved on the `.vengi` scene
+   - Path tracer HDRI lighting (Radiance `.hdr` or OpenEXR `.exr`), ground plane shadows, and studio voxel edges; saved on the `.vengi` scene
    - Hide environment is on by default and stored on the `.vengi` scene (`env_hidden`)
    - Voxel-grid path tracer: emit voxels are area lights; volumetric emit is fire/plasma/neon gas; glass/alpha use Beer's-law attenuation; metal uses GGX; Volumetric is fog/cloud/smoke (density, scatter, rim light); Output Denoise is an edge-aware stills filter
    - Render panel uses a CPU voxel-grid path tracer (no mesh) via `IPathTracer`
