@@ -165,24 +165,56 @@ fn hash32(input: u32) -> u32 {
     return value;
 }
 
-fn progressive2D(index: u32, scramble: u32) -> vec2<f32> {
-    let rotationX = f32(hash32(scramble ^ 0x68bc21ebu) >> 8u) * (1.0 / 16777216.0);
-    let rotationY = f32(hash32(scramble ^ 0x02e5be93u) >> 8u) * (1.0 / 16777216.0);
-    let sample = f32(index + 1u);
-    return fract(vec2<f32>(rotationX + sample * 0.7548776662466927,
-                           rotationY + sample * 0.5698402909980532));
+const SOBOL_DIM1_DIRECTIONS: array<u32, 32> = array<u32, 32>(
+    1u, 3u, 3u, 9u, 29u, 23u, 71u, 197u, 209u, 627u, 1907u, 1369u,
+    4109u, 12327u, 12407u, 36949u, 119041u, 94979u, 291587u, 809225u,
+    855325u, 2565911u, 7829319u, 5592517u, 16777681u, 50332019u,
+    50332787u, 150998105u, 486542605u, 385885991u, 1191212919u, 3305133397u
+);
+
+fn sobolOwenHash(x_in: u32, seed: u32) -> u32 {
+    var x = x_in;
+    x ^= x * 0x3d20adeau;
+    x += seed;
+    x *= (seed >> 16u) | 1u;
+    x ^= x * 0x05526c56u;
+    x ^= x * 0x53a22864u;
+    return x;
 }
 
-fn progressive1D(index: u32, scramble: u32) -> f32 {
-    let rotation = f32(hash32(scramble) >> 8u) * (1.0 / 16777216.0);
-    return fract(rotation + f32(index + 1u) * 0.7548776662466927);
+fn sobolRaw(index: u32, dim: u32) -> u32 {
+    if (dim == 0u) {
+        return reverseBits(index);
+    }
+    var v = 0u;
+    var n = index;
+    while (n != 0u) {
+        let k = countTrailingZeros(n);
+        v ^= SOBOL_DIM1_DIRECTIONS[k] << (31u - k);
+        n = n & (n - 1u);
+    }
+    return v;
+}
+
+fn sobolSample(index: u32, dim: u32, seed: u32) -> f32 {
+    return f32(sobolOwenHash(sobolRaw(index, dim), seed) >> 8u) * (1.0 / 16777216.0);
+}
+
+fn sobol1D(index: u32, scramble: u32) -> f32 {
+    return sobolSample(index, 0u, hash32(scramble));
+}
+
+fn sobol2D(index: u32, scramble: u32) -> vec2<f32> {
+    let x = sobolSample(index, 0u, hash32(scramble ^ 0x68bc21ebu));
+    let y = sobolSample(index, 1u, hash32(scramble ^ 0x02e5be93u));
+    return vec2<f32>(x, y);
 }
 
 fn primaryRay(pixelIndex: u32) -> PathTracerRay {
     let width = u32(cameraData.viewport.x);
     let pixel = vec2<u32>(pixelIndex % width, pixelIndex / width);
     let pixelScramble = hash32(pixelIndex ^ 0xa511e9b3u);
-    let cameraSample = progressive2D(primaryParams.sampleIndex, pixelScramble);
+    let cameraSample = sobol2D(primaryParams.sampleIndex, pixelScramble);
     let pixelPosition = vec2<f32>(pixel) + cameraSample;
     let ndc = vec2<f32>(pixelPosition.x * cameraData.viewport.z * 2.0 - 1.0,
                         1.0 - pixelPosition.y * cameraData.viewport.w * 2.0);
@@ -537,7 +569,7 @@ fn environmentPdf(direction: vec3<f32>) -> f32 {
 fn sampleEnvironment(normal: vec3<f32>, sequenceIndex: u32,
                      scramble: u32) -> PathTracerEnvironmentSample {
     var sample: PathTracerEnvironmentSample;
-    let sequence = progressive2D(sequenceIndex, scramble);
+    let sequence = sobol2D(sequenceIndex, scramble);
     if (lightingData.flags.x != 2u || environmentData.dimensions.w == 0u ||
         environmentData.distribution.x <= 0.0) {
         let direction = cosineHemisphere(normal, sequence);
@@ -546,7 +578,7 @@ fn sampleEnvironment(normal: vec3<f32>, sequenceIndex: u32,
         sample.radiance = vec4<f32>(evalEnvironment(direction), 0.0);
         return sample;
     }
-	let cdfTarget = progressive1D(sequenceIndex, scramble ^ 0x9e3779b9u) *
+	let cdfTarget = sobol1D(sequenceIndex, scramble ^ 0x9e3779b9u) *
                    environmentData.distribution.x;
     var lower = 0u;
     var upper = environmentData.dimensions.z - 1u;
@@ -594,7 +626,7 @@ fn evalEnvironment(direction: vec3<f32>) -> vec3<f32> {
 
 fn sampleEnvironmentIso(sequenceIndex: u32, scramble: u32) -> PathTracerEnvironmentSample {
     var sample: PathTracerEnvironmentSample;
-    let sequence = progressive2D(sequenceIndex, scramble);
+    let sequence = sobol2D(sequenceIndex, scramble);
     if (lightingData.flags.x != 2u || environmentData.dimensions.w == 0u ||
         environmentData.distribution.x <= 0.0) {
         let y = 1.0 - 2.0 * sequence.x;
@@ -605,7 +637,7 @@ fn sampleEnvironmentIso(sequenceIndex: u32, scramble: u32) -> PathTracerEnvironm
         sample.radiance = vec4<f32>(evalEnvironment(direction), 0.0);
         return sample;
     }
-    let cdfTarget = progressive1D(sequenceIndex, scramble ^ 0x9e3779b9u) *
+    let cdfTarget = sobol1D(sequenceIndex, scramble ^ 0x9e3779b9u) *
                           environmentData.distribution.x;
     var lower = 0u;
     var upper = environmentData.dimensions.z - 1u;
@@ -758,11 +790,11 @@ fn sampleEmitter(position: vec3<f32>, normal: vec3<f32>, skipCellGrid: vec4<i32>
     if (primaryParams.emitterCount == 0u) {
         return result;
     }
-    let selection = progressive1D(sequenceIndex, scramble ^ 0x27d4eb2du);
+    let selection = sobol1D(sequenceIndex, scramble ^ 0x27d4eb2du);
     let emitterIndex = min(u32(selection * f32(primaryParams.emitterCount)),
                            primaryParams.emitterCount - 1u);
     let emitter = emitters[emitterIndex];
-    let faceSample = progressive2D(sequenceIndex, scramble ^ 0xb5297a4du);
+    let faceSample = sobol2D(sequenceIndex, scramble ^ 0xb5297a4du);
     let lightPosition = emitter.originArea.xyz + emitter.edgeU.xyz * faceSample.x +
                         emitter.edgeV.xyz * faceSample.y;
     let toLight = lightPosition - position;
@@ -881,7 +913,7 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 	let direction = normalize(ray.directionMax.xyz);
 	let stepLength = max(mediaData.params.x, 0.05);
 	let reach = min(maximumDistance, mediaData.params.y);
-	let jitter = progressive1D(sequenceIndex, scramble ^ 0xd1b54a35u) * stepLength;
+	let jitter = sobol1D(sequenceIndex, scramble ^ 0xd1b54a35u) * stepLength;
 	let environmentSample = sampleEnvironmentIso(sequenceIndex, scramble ^ 0x94d049bbu);
 	var transmission = vec3<f32>(1.0);
 	for (var stepIndex = 0u; stepIndex < 232u; stepIndex += 1u) {
@@ -1072,7 +1104,7 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
 			let totalInternalReflection = dot(refracted, refracted) < 1.0e-12;
 			let fresnel = select(fresnelSchlickIor(cosine, ior), 1.0,
 								 totalInternalReflection);
-			let reflectionChoice = progressive1D(sequenceIndex, bounceScramble ^ 0x51ed270bu);
+			let reflectionChoice = sobol1D(sequenceIndex, bounceScramble ^ 0x51ed270bu);
 			var nextDirection: vec3<f32>;
 			var nextOrigin: vec3<f32>;
 			if (totalInternalReflection || reflectionChoice < fresnel) {
@@ -1096,7 +1128,7 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
 		}
 
 		if (surfaceType == surfaceAlpha) {
-			let alphaChoice = progressive1D(sequenceIndex, bounceScramble ^ 0x85ebca6bu);
+			let alphaChoice = sobol1D(sequenceIndex, bounceScramble ^ 0x85ebca6bu);
 			if (alphaChoice >= material.albedoOpacity.w) {
 				emitterMisValid = false;
 				if (bounce + 1u >= maxBounces) {
@@ -1125,35 +1157,29 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
         let roughness = clamp(material.surface.y, 0.04, 1.0);
         let alpha = roughness * roughness;
         let outgoing = -ray.directionMax.xyz;
-        // Primary voxel faces and ground converge faster with four stratified
-        // HDRI next-event samples (CPU twin parity). Later bounces use one.
-        let directEnvironmentSamples = select(1u, 4u,
-            bounce == 0u && lightingData.flags.x == 2u);
+        // Single environment next-event sample with full MIS. The four-sample
+        // stratification heuristic is dropped: 1 NEE + 1 BSDF + full MIS.
         let includeEnvironmentMis = bounce + 1u < maxBounces;
-        for (var lightSample = 0u; lightSample < directEnvironmentSamples; lightSample += 1u) {
-            let lightSequenceIndex = sequenceIndex * directEnvironmentSamples + lightSample;
-            let environmentSample = sampleEnvironment(facingNormal, lightSequenceIndex,
-                bounceScramble ^ 0x68bc21ebu);
-            let lightDirection = environmentSample.directionPdf.xyz;
-            var shadowRay: PathTracerRay;
-            shadowRay.originMin = vec4<f32>(hit.positionT.xyz + facingNormal * 1.0e-3, 1.0e-4);
-            shadowRay.directionMax = vec4<f32>(lightDirection, 1.0e30);
-            shadowRay.skipCellGrid = hit.cellGrid;
-            shadowRay.flags = vec4<u32>(1u, 0u, 0u, 0u);
-            let shadowHit = traceTransportScene(shadowRay, primaryParams.gridCount);
-            if (shadowHit.data.y == 0u) {
-                let lightPdf = environmentSample.directionPdf.w;
-                if (lightPdf > 1.0e-8) {
-                    let combinedLightPdf = lightPdf * f32(directEnvironmentSamples);
-                    let fcos = evalOpaqueFcos(albedo, material.surface.x, material.surface.z, alpha,
-                                               facingNormal, outgoing, lightDirection);
-                    let bsdfPdf = opaquePdf(albedo, material.surface.x, material.surface.z, alpha,
-                                            facingNormal, outgoing, lightDirection);
-                    let misWeight = select(1.0, powerHeuristic(combinedLightPdf, bsdfPdf),
-                                           includeEnvironmentMis);
-                    radiance += throughput * fcos * environmentSample.radiance.xyz * misWeight /
-                        combinedLightPdf;
-                }
+        let environmentSample = sampleEnvironment(facingNormal, sequenceIndex,
+            bounceScramble ^ 0x68bc21ebu);
+        let lightDirection = environmentSample.directionPdf.xyz;
+        var shadowRay: PathTracerRay;
+        shadowRay.originMin = vec4<f32>(hit.positionT.xyz + facingNormal * 1.0e-3, 1.0e-4);
+        shadowRay.directionMax = vec4<f32>(lightDirection, 1.0e30);
+        shadowRay.skipCellGrid = hit.cellGrid;
+        shadowRay.flags = vec4<u32>(1u, 0u, 0u, 0u);
+        let shadowHit = traceTransportScene(shadowRay, primaryParams.gridCount);
+        if (shadowHit.data.y == 0u) {
+            let lightPdf = environmentSample.directionPdf.w;
+            if (lightPdf > 1.0e-8) {
+                let fcos = evalOpaqueFcos(albedo, material.surface.x, material.surface.z, alpha,
+                                           facingNormal, outgoing, lightDirection);
+                let bsdfPdf = opaquePdf(albedo, material.surface.x, material.surface.z, alpha,
+                                        facingNormal, outgoing, lightDirection);
+                let misWeight = select(1.0, powerHeuristic(lightPdf, bsdfPdf),
+                                       includeEnvironmentMis);
+                radiance += throughput * fcos * environmentSample.radiance.xyz * misWeight /
+                    lightPdf;
             }
         }
 
@@ -1176,8 +1202,8 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
         if (bounce + 1u >= maxBounces) {
             break;
         }
-        let bsdfSequence = progressive2D(sequenceIndex, bounceScramble ^ 0x02e5be93u);
-        let specularChoice = progressive1D(sequenceIndex, bounceScramble ^ 0x7f4a7c15u);
+        let bsdfSequence = sobol2D(sequenceIndex, bounceScramble ^ 0x02e5be93u);
+        let specularChoice = sobol1D(sequenceIndex, bounceScramble ^ 0x7f4a7c15u);
         let specularProbability = opaqueSpecularProbability(
             albedo, material.surface.x, material.surface.z, facingNormal, outgoing);
         var incoming: vec3<f32>;
@@ -1194,13 +1220,22 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
         }
         throughput *= evalOpaqueFcos(albedo, material.surface.x, material.surface.z, alpha,
                                      facingNormal, outgoing, incoming) / bsdfPdf;
-        if (max(throughput.x, max(throughput.y, throughput.z)) < 0.01) {
-            break;
+        // Unbiased Russian roulette replaces the old hard throughput cutoff,
+        // which silently dropped the residual energy of dim paths (darkened
+        // deep-indirect corners). Terminate probabilistically and rescale
+        // survivors so the expected contribution is unchanged.
+        let throughputMax = max(throughput.x, max(throughput.y, throughput.z));
+        if (throughputMax < 0.2) {
+            let survival = max(throughputMax, 1.0e-4);
+            if (sobol1D(sequenceIndex, bounceScramble ^ 0x5be0cd19u) > survival) {
+                break;
+            }
+            throughput /= survival;
         }
 		previousBsdfPdf = bsdfPdf;
 		previousEnvironmentPdf = max(dot(facingNormal, incoming), 0.0) * 0.3183098861837907;
 		if (lightingData.flags.x == 2u && environmentData.dimensions.w != 0u) {
-			previousEnvironmentPdf = environmentPdf(incoming) * f32(directEnvironmentSamples);
+			previousEnvironmentPdf = environmentPdf(incoming);
 		}
 		previousPosition = hit.positionT.xyz + facingNormal * 1.0e-3;
 		emitterMisValid = primaryParams.emitterCount > 0u;

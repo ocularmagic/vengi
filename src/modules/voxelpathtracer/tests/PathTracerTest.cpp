@@ -70,28 +70,57 @@ TEST_F(PathTracerTest, testPortableSamplingContract) {
 	uint32_t state = 1u;
 	EXPECT_NEAR(0.154574156f, next1D(state), 0.0000001f);
 	EXPECT_EQ(663891101u, state);
-	EXPECT_NEAR(0.507460833f, progressive1D(0u, 0u), 0.000001f);
-	EXPECT_NEAR(0.791604519f, progressive1D(7u, 0u), 0.000001f);
-	EXPECT_NEAR(0.987861872f, progressive1D(3u, 0xa511e9b3u), 0.000001f);
-	const glm::vec2 sample2D = progressive2D(3u, 0xa511e9b3u);
-	EXPECT_NEAR(0.391909101f, sample2D.x, 0.000001f);
-	EXPECT_NEAR(0.161240672f, sample2D.y, 0.000001f);
+
+	// Owen-scrambled Sobol replaced the old R2 recurrence. Bit reversal and the
+	// radical inverse are exact; the raw 2D Sobol is a perfect (0,2)-net.
+	EXPECT_EQ(0u, reverseBits32(0u));
+	EXPECT_EQ(0x80000000u, reverseBits32(1u));
+	EXPECT_EQ(1u, reverseBits32(0x80000000u));
+	EXPECT_EQ(0x1e6a2c48u, reverseBits32(0x12345678u));
+	EXPECT_EQ(0u, sobolRaw(0u, 0u));
+	EXPECT_EQ(0x80000000u, sobolRaw(1u, 0u));
+	EXPECT_EQ(0xc0000000u, sobolRaw(2u, 1u));
+
+	// The raw first 16 (dim0, dim1) points stratify every 4x4 cell exactly once.
 	bool occupied[4][4] = {};
 	for (uint32_t i = 0u; i < 16u; ++i) {
-		const glm::vec2 p = progressive2D(i, 7u);
+		const int cx = (int)(sobolRaw(i, 0u) >> 30u);
+		const int cy = (int)(sobolRaw(i, 1u) >> 30u);
+		EXPECT_FALSE(occupied[cy][cx]) << "duplicate Sobol cell at index " << i;
+		occupied[cy][cx] = true;
+	}
+	for (int y = 0; y < 4; ++y) {
+		for (int x = 0; x < 4; ++x) {
+			EXPECT_TRUE(occupied[y][x]) << "Sobol missed cell (" << x << "," << y << ")";
+		}
+	}
+
+	// The Owen-scrambled 2D sampler is deterministic and in [0,1).
+	const glm::vec2 s0 = sobol2D(3u, 0xa511e9b3u);
+	EXPECT_NEAR(s0.x, sobol2D(3u, 0xa511e9b3u).x, 0.0f);
+	EXPECT_NEAR(s0.y, sobol2D(3u, 0xa511e9b3u).y, 0.0f);
+	for (uint32_t i = 0u; i < 64u; ++i) {
+		const glm::vec2 p = sobol2D(i, 7u);
 		EXPECT_GE(p.x, 0.0f);
 		EXPECT_LT(p.x, 1.0f);
 		EXPECT_GE(p.y, 0.0f);
 		EXPECT_LT(p.y, 1.0f);
-		occupied[(int)(p.y * 4.0f)][(int)(p.x * 4.0f)] = true;
 	}
-	int occupiedCells = 0;
-	for (int y = 0; y < 4; ++y) {
-		for (int x = 0; x < 4; ++x) {
-			occupiedCells += occupied[y][x] ? 1 : 0;
-		}
-	}
-	EXPECT_GE(occupiedCells, 12);
+
+	// Golden values pin CPU<->WGSL bit-parity of the Owen-scrambled hash and
+	// the full 1D/2D sample output (same algorithm, same constants).
+	EXPECT_EQ(0x00000000u, sobolOwenHash(0u, 0u));
+	EXPECT_EQ(0x64f83209u, sobolOwenHash(0x80000000u, 7u));
+	EXPECT_FLOAT_EQ(0.934451044f, sobol1D(0u, 0u));
+	EXPECT_FLOAT_EQ(0.434451044f, sobol1D(1u, 0u));
+	EXPECT_FLOAT_EQ(0.684451044f, sobol1D(2u, 0u));
+	EXPECT_FLOAT_EQ(0.184451044f, sobol1D(3u, 0u));
+	const glm::vec2 g0 = sobol2D(0u, 0u);
+	EXPECT_FLOAT_EQ(0.108125567f, g0.x);
+	EXPECT_FLOAT_EQ(0.289022863f, g0.y);
+	const glm::vec2 g3 = sobol2D(3u, 0xa511e9b3u);
+	EXPECT_FLOAT_EQ(0.044486463f, g3.x);
+	EXPECT_FLOAT_EQ(0.760713518f, g3.y);
 }
 
 TEST_F(PathTracerTest, testHdriPathFallsBackToPortableBasename) {
@@ -131,7 +160,7 @@ TEST_F(PathTracerTest, testPortableCameraRayMatchesEditorCamera) {
 	primaryParams.sampleIndex = 3u;
 	const uint32_t pixelIndex = static_cast<uint32_t>(pixel.y) * 80u + static_cast<uint32_t>(pixel.x);
 	const uint32_t scramble = voxelpathtracer::sampling::hash32(pixelIndex ^ 0xa511e9b3u);
-	const glm::vec2 jitter = voxelpathtracer::sampling::progressive2D(primaryParams.sampleIndex, scramble);
+	const glm::vec2 jitter = voxelpathtracer::sampling::sobol2D(primaryParams.sampleIndex, scramble);
 	const math::Ray expectedPrimary = voxelpathtracer::pathTracerCameraRay(
 		data, static_cast<float>(pixel.x) + jitter.x, static_cast<float>(pixel.y) + jitter.y);
 	const voxelpathtracer::PathTracerRay primary =
@@ -397,6 +426,11 @@ TEST_F(PathTracerTest, testWGSLTraversalABIContract) {
 	EXPECT_TRUE(source.contains("fn mediaAt"));
 	EXPECT_TRUE(source.contains("fn integrateMedia"));
 	EXPECT_TRUE(source.contains("fn henyeyGreenstein"));
+	EXPECT_TRUE(source.contains("fn sobol2D"));
+	EXPECT_TRUE(source.contains("fn sobol1D"));
+	EXPECT_TRUE(source.contains("fn sobolOwenHash"));
+	EXPECT_TRUE(source.contains("reverseBits(index)"));
+	EXPECT_TRUE(source.contains("countTrailingZeros(n)"));
 	EXPECT_TRUE(source.contains("fn clampSampleHistory"));
 	EXPECT_TRUE(source.contains("fn sampleGgxVisibleHalf"));
 	EXPECT_TRUE(source.contains("fn opaquePdf"));
@@ -404,14 +438,14 @@ TEST_F(PathTracerTest, testWGSLTraversalABIContract) {
 	EXPECT_TRUE(source.contains("surfaceType == surfaceGlass"));
 	EXPECT_TRUE(source.contains("surfaceType == surfaceAlpha"));
 	EXPECT_TRUE(source.contains("let maxBounces = clamp(lightingData.flags.w, 1u, 8u)"));
-	// M3: the WebGPU twin must spend the same four stratified HDRI next-event
-	// samples on the primary bounce as the CPU so the ground and soft shadow
-	// converge at the same rate.
-	EXPECT_TRUE(source.contains("directEnvironmentSamples = select(1u, 4u"));
-	EXPECT_TRUE(source.contains("bounce == 0u && lightingData.flags.x == 2u"));
+	// Item 2: environment next-event estimation uses a single sample with full
+	// MIS (1 NEE + 1 BSDF); the old four-sample stratification heuristic is gone.
+	EXPECT_TRUE(source.contains("let environmentSample = sampleEnvironment(facingNormal, sequenceIndex"));
 	EXPECT_TRUE(source.contains("includeEnvironmentMis = bounce + 1u < maxBounces"));
-	EXPECT_TRUE(source.contains("combinedLightPdf = lightPdf * f32(directEnvironmentSamples)"));
-	EXPECT_TRUE(source.contains("previousEnvironmentPdf = environmentPdf(incoming) * f32(directEnvironmentSamples)"));
+	EXPECT_TRUE(source.contains("powerHeuristic(lightPdf, bsdfPdf)"));
+	EXPECT_TRUE(source.contains("previousEnvironmentPdf = environmentPdf(incoming);"));
+	// Item 4: unbiased Russian roulette replaces the hard throughput cutoff.
+	EXPECT_TRUE(source.contains("let survival = max(throughputMax, 1.0e-4)"));
 	}
 
 TEST_F(PathTracerTest, testWebGPUBackendLifecycleContract) {
