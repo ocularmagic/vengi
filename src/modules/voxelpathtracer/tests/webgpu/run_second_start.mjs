@@ -41,7 +41,7 @@ const proc = spawn(chrome, [
 	'--enable-unsafe-webgpu',
 	'--enable-webgpu-developer-features',
 	`--remote-debugging-port=${port}`,
-	'--user-data-dir=C:\\Users\\james\\AppData\\Local\\Temp\\vengi-webgpu-cdp2',
+	'--user-data-dir=C:\\Users\\james\\AppData\\Local\\Temp\\vengi-webgpu-cdp2-' + Date.now() + '',
 	'about:blank',
 ], { stdio: 'ignore' });
 
@@ -70,6 +70,13 @@ try {
 	});
 	await send('Page.enable');
 	await send('Runtime.enable');
+	ws.addEventListener('message', event => {
+		const msg = JSON.parse(event.data);
+		if (msg.method === 'Runtime.consoleAPICalled') {
+			const args = msg.params.args.map(a => (a.value !== undefined ? a.value : a.description)).join(' ');
+			console.error('BROWSER[' + msg.params.type + ']', args);
+		}
+	});
 	await send('Page.navigate', { url });
 	await new Promise(resolve => setTimeout(resolve, 1000));
 	const deadline = Date.now() + 120000;
