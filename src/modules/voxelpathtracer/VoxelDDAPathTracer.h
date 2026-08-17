@@ -85,22 +85,23 @@ private:
 	glm::vec3 toWorld(const PathTracerGrid &grid, const glm::vec3 &local) const;
 	bool visibleToLight(const glm::vec3 &orig, const glm::vec3 &target, bool fromGround, int skipGrid,
 						const glm::ivec3 &skipCell, int lightGrid, const glm::ivec3 &lightCell) const;
-	bool sampleEmitLight(const glm::vec3 &p, const glm::vec3 &n, uint32_t &rng, int skipGrid, const glm::ivec3 &skipCell,
-						 glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const;
+	bool sampleEmitLight(const glm::vec3 &p, const glm::vec3 &n, uint32_t sequenceIndex, uint32_t scramble, int skipGrid,
+						 const glm::ivec3 &skipCell, glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const;
 	float emitLightPdf(const glm::vec3 &p, const Hit &hit) const;
 	glm::vec3 evalEnvironment(const glm::vec3 &dir) const;
 	float environmentPdf(const glm::vec3 &dir) const;
-	bool sampleHdri(uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance, float &pdf, int stratum = 0,
-					int strata = 1, float cdfUnit = -1.0f) const;
-	bool sampleEnvironment(const glm::vec3 &n, uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance, float &pdf,
-						   int stratum = 0, int strata = 1, float cdfUnit = -1.0f) const;
-	bool sampleEnvironmentIso(uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const;
+	bool sampleHdri(uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir, glm::vec3 &radiance,
+					float &pdf) const;
+	bool sampleEnvironment(const glm::vec3 &n, uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir,
+						   glm::vec3 &radiance, float &pdf) const;
+	bool sampleEnvironmentIso(uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir, glm::vec3 &radiance,
+							  float &pdf) const;
 	bool sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albedo, float &density, float &phase, float &scatter,
 					 glm::vec3 &emit) const;
 	glm::vec3 fieldMediaT(const glm::vec3 &orig, const glm::vec3 &dir, float tmax) const;
 	glm::vec3 marchVolume(const glm::vec3 &orig, const glm::vec3 &dir, float tmax, int skipGrid,
 						  const glm::ivec3 &skipCell, glm::vec3 &color, const glm::vec3 &throughput,
-						  uint32_t &rng) const;
+						  uint32_t sequenceIndex, uint32_t scramble) const;
 	bool pointInVoxel(const glm::vec3 &worldPos) const;
 	bool occluded(const glm::vec3 &orig, const glm::vec3 &dir, bool fromGround, int skipGrid,
 				  const glm::ivec3 &skipCell) const;
@@ -110,7 +111,7 @@ private:
 				   int skipGrid, const glm::ivec3 &skipCell, bool shadowRay, Hit &hit) const;
 	Hit trace(const glm::vec3 &orig, const glm::vec3 &dir, int skipGrid = -1,
 			  const glm::ivec3 &skipCell = glm::ivec3(0), bool shadowRay = false) const;
-	glm::vec4 tracePath(const glm::vec3 &orig, const glm::vec3 &dir, uint32_t &rng, int sampleIndex,
+	glm::vec4 tracePath(const glm::vec3 &orig, const glm::vec3 &dir, int sampleIndex,
 						uint32_t pixelScramble, glm::vec3 &guideAlbedo, glm::vec3 &guideNormal, float &guideDepth,
 						float &guideFeature) const;
 	void accumulateSample();

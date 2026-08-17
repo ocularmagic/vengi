@@ -16,7 +16,7 @@ PathTracerRay pathTracerPrimaryRay(const PathTracerCameraData &camera, const Pat
 	const uint32_t x = pixelIndex % width;
 	const uint32_t y = pixelIndex / width;
 	const uint32_t pixelScramble = sampling::hash32(pixelIndex ^ 0xa511e9b3u);
-	const glm::vec2 cameraSample = sampling::progressive2D(params.sampleIndex, pixelScramble);
+	const glm::vec2 cameraSample = sampling::sobol2D(params.sampleIndex, pixelScramble);
 	const math::Ray ray = pathTracerCameraRay(camera, static_cast<float>(x) + cameraSample.x,
 										 static_cast<float>(y) + cameraSample.y);
 	return pathTracerRay(ray.origin, ray.direction, 1.0e30f);
