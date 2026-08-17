@@ -188,11 +188,11 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		sampleResult: null,
 		resultRayCount: 0,
 		samplePixelCount: 0,
-		source: '',
+		source: "",
 		recoveries: 0,
 		maxRecoveries: 1,
 		needsUpload: false,
-		fallbackMessage: ''
+		fallbackMessage: ""
 	};
 	runtime.backends.set(handle, record);
 	const source = UTF8ToString(sourcePointer, sourceLength);
@@ -244,7 +244,7 @@ EM_JS(int, vengiPathTracerWebGPUConsumeNeedsUpload, (int handle), {
 EM_JS(int, vengiPathTracerWebGPUCopyMessage, (int handle, char *dst, uint32_t cap), {
 	const runtime = Module.vengiPathTracerWebGPU;
 	const record = runtime ? runtime.backends.get(handle) : null;
-	const message = record && record.fallbackMessage ? record.fallbackMessage : '';
+	const message = record && record.fallbackMessage ? record.fallbackMessage : "";
 	if (!dst || cap === 0) {
 		return message.length;
 	}
