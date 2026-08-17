@@ -275,13 +275,52 @@
 			return (value ^ (value >>> 15)) >>> 0;
 		}
 
-		function progressive2D(index, scramble) {
-			const rotationX = (hash32(scramble ^ 0x68bc21eb) >>> 8) / 16777216.0;
-			const rotationY = (hash32(scramble ^ 0x02e5be93) >>> 8) / 16777216.0;
-			const sample = index + 1;
-			const x = rotationX + sample * 0.7548776662466927;
-			const y = rotationY + sample * 0.5698402909980532;
-			return [x - Math.floor(x), y - Math.floor(y)];
+		const SOBOL_DIM1_DIRECTIONS = [
+			1, 3, 3, 9, 29, 23, 71, 197, 209, 627, 1907, 1369,
+			4109, 12327, 12407, 36949, 119041, 94979, 291587, 809225,
+			855325, 2565911, 7829319, 5592517, 16777681, 50332019,
+			50332787, 150998105, 486542605, 385885991, 1191212919, 3305133397
+		];
+
+		function reverseBits32(x) {
+			x = ((x >>> 1) & 0x55555555) | ((x & 0x55555555) << 1);
+			x = ((x >>> 2) & 0x33333333) | ((x & 0x33333333) << 2);
+			x = ((x >>> 4) & 0x0f0f0f0f) | ((x & 0x0f0f0f0f) << 4);
+			x = ((x >>> 8) & 0x00ff00ff) | ((x & 0x00ff00ff) << 8);
+			return ((x >>> 16) | (x << 16)) >>> 0;
+		}
+
+		function sobolOwenHash(x, seed) {
+			x = (x ^ Math.imul(x, 0x3d20adea)) >>> 0;
+			x = (x + seed) >>> 0;
+			x = Math.imul(x, (seed >>> 16) | 1) >>> 0;
+			x = (x ^ Math.imul(x, 0x05526c56)) >>> 0;
+			return (x ^ Math.imul(x, 0x53a22864)) >>> 0;
+		}
+
+		function sobolRaw(index, dim) {
+			if (dim === 0) {
+				return reverseBits32(index);
+			}
+			let v = 0;
+			let n = index >>> 0;
+			while (n !== 0) {
+				const lowest = (n & (~n + 1)) >>> 0;
+				const k = 31 - Math.clz32(lowest);
+				v = (v ^ ((SOBOL_DIM1_DIRECTIONS[k] << (31 - k)) >>> 0)) >>> 0;
+				n = (n & (n - 1)) >>> 0;
+			}
+			return v >>> 0;
+		}
+
+		function sobolSample(index, dim, seed) {
+			return (sobolOwenHash(sobolRaw(index, dim), seed) >>> 8) / 16777216.0;
+		}
+
+		function sobol2D(index, scramble) {
+			const x = sobolSample(index, 0, hash32((scramble ^ 0x68bc21eb) >>> 0));
+			const y = sobolSample(index, 1, hash32((scramble ^ 0x02e5be93) >>> 0));
+			return [x, y];
 		}
 
 		function validateHits(data) {
@@ -339,7 +378,7 @@
 				near(view.getFloat32(offset + 24, true), -1.0, 0.0002,
 					`primary pixel ${pixelIndex} normal`);
 				const scramble = hash32((pixelIndex ^ 0xa511e9b3) >>> 0);
-				const jitter = progressive2D(sampleIndex, scramble);
+				const jitter = sobol2D(sampleIndex, scramble);
 				const x = pixelIndex % 2;
 				const y = Math.floor(pixelIndex / 2);
 				near(view.getFloat32(offset, true), (x + jitter[0]) * 0.5, 0.0002,
@@ -382,7 +421,7 @@
 				let positionX = 0.0;
 				let positionY = 0.0;
 				for (const sampleIndex of sampleIndices) {
-					const jitter = progressive2D(sampleIndex, scramble);
+					const jitter = sobol2D(sampleIndex, scramble);
 					positionX += (x + jitter[0]) * 0.5;
 					positionY += 1.0 - (y + jitter[1]) * 0.5;
 				}
@@ -418,6 +457,19 @@
 
 		async function run() {
 			expect(navigator.gpu, 'WebGPU is not available');
+			// Golden values pin the JS Sobol twin to the CPU sampler. The WGSL
+			// shader is already checked against this JS twin by validatePrimaryHits
+			// and validateSampleOutputs, so this closes the CPU -> JS -> WGSL
+			// bit-parity chain.
+			expect(sobolOwenHash(0, 0) === 0, 'sobolOwenHash(0,0) golden value');
+			expect(sobolOwenHash(0x80000000, 7) === 0x64f83209,
+				'sobolOwenHash(0x80000000,7) golden value');
+			const g0 = sobol2D(0, 0);
+			near(g0[0], 0.108125567, 1e-6, 'sobol2D(0,0).x golden value');
+			near(g0[1], 0.289022863, 1e-6, 'sobol2D(0,0).y golden value');
+			const g3 = sobol2D(3, 0xa511e9b3);
+			near(g3[0], 0.044486463, 1e-6, 'sobol2D(3,0xa511e9b3).x golden value');
+			near(g3[1], 0.760713518, 1e-6, 'sobol2D(3,0xa511e9b3).y golden value');
 			const headerResponse = await fetch('../../PathTracerTraversalWGSL.h');
 			expect(headerResponse.ok, `could not load WGSL header (${headerResponse.status})`);
 			const header = await headerResponse.text();
@@ -619,50 +671,60 @@
 			const bounceCells = uploadBuffer(device, makeBounceCells(), storage, 'bounce cells');
 			const bounceMaterials = uploadBuffer(device, makeBounceMaterials(), storage, 'bounce materials');
 			const bounceCamera = uploadBuffer(device, makeBounceCamera(), GPUBufferUsage.UNIFORM, 'bounce camera');
-			const bounceParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
-				GPUBufferUsage.UNIFORM, 'bounce params');
 			const bounceHits = device.createBuffer({
 				label: 'bounce hits', size: 96,
 				usage: GPUBufferUsage.STORAGE
 			});
-			const bounceOutputs = device.createBuffer({
-				label: 'bounce outputs', size: 96,
-				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-			});
+			// Average over several Sobol samples so the multi-bounce transport check
+			// does not hinge on a single scatter direction. A rough (alpha=1) floor
+			// occasionally selects the specular branch and reflects the continuation
+			// ray back into the surface; that is correct for that one sample, but a
+			// single-sample assertion would then be flaky.
+			const bounceSampleCount = 16;
 			const runBounceCase = async maxBounces => {
 				const bounceLighting = uploadBuffer(device, makeLighting(maxBounces),
 					GPUBufferUsage.UNIFORM, `bounce lighting ${maxBounces}`);
-				const bounceBindGroup = device.createBindGroup({
-					layout: primaryPipeline.getBindGroupLayout(0),
-					entries: [
-						{binding: 0, resource: {buffer: bounceGrids}},
-						{binding: 1, resource: {buffer: bounceCells}},
-						{binding: 2, resource: {buffer: bounceMaterials}},
-						{binding: 4, resource: {buffer: bounceHits}},
-						{binding: 6, resource: {buffer: bounceCamera}},
-						{binding: 7, resource: {buffer: bounceParams}},
-						{binding: 8, resource: {buffer: bounceLighting}},
-						{binding: 9, resource: {buffer: bounceOutputs}},
-						{binding: 10, resource: {buffer: emptyEmitters}},
-						{binding: 11, resource: {buffer: emptyGround}},
-						{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
-						{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
-						{binding: 14, resource: {buffer: emptyEnvironmentData}},
-						{binding: 15, resource: {buffer: emptyMediaData}}
-					]
+				const bounceOutputs = device.createBuffer({
+					label: `bounce outputs ${maxBounces}`, size: 96,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
 				});
+				for (let sampleIndex = 0; sampleIndex < bounceSampleCount; ++sampleIndex) {
+					const params = uploadBuffer(device, new Uint32Array([1, sampleIndex, 1, 0]).buffer,
+						GPUBufferUsage.UNIFORM, `bounce params ${sampleIndex}`);
+					const bounceBindGroup = device.createBindGroup({
+						layout: primaryPipeline.getBindGroupLayout(0),
+						entries: [
+							{binding: 0, resource: {buffer: bounceGrids}},
+							{binding: 1, resource: {buffer: bounceCells}},
+							{binding: 2, resource: {buffer: bounceMaterials}},
+							{binding: 4, resource: {buffer: bounceHits}},
+							{binding: 6, resource: {buffer: bounceCamera}},
+							{binding: 7, resource: {buffer: params}},
+							{binding: 8, resource: {buffer: bounceLighting}},
+							{binding: 9, resource: {buffer: bounceOutputs}},
+							{binding: 10, resource: {buffer: emptyEmitters}},
+							{binding: 11, resource: {buffer: emptyGround}},
+							{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+							{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+							{binding: 14, resource: {buffer: emptyEnvironmentData}},
+							{binding: 15, resource: {buffer: emptyMediaData}}
+						]
+					});
+					const bounceEncoder = device.createCommandEncoder();
+					const bouncePass = bounceEncoder.beginComputePass();
+					bouncePass.setPipeline(primaryPipeline);
+					bouncePass.setBindGroup(0, bounceBindGroup);
+					bouncePass.dispatchWorkgroups(1);
+					bouncePass.end();
+					device.queue.submit([bounceEncoder.finish()]);
+				}
 				const bounceReadback = device.createBuffer({
 					label: `bounce readback ${maxBounces}`, size: 96,
 					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
 				});
-				const bounceEncoder = device.createCommandEncoder();
-				const bouncePass = bounceEncoder.beginComputePass();
-				bouncePass.setPipeline(primaryPipeline);
-				bouncePass.setBindGroup(0, bounceBindGroup);
-				bouncePass.dispatchWorkgroups(1);
-				bouncePass.end();
-				bounceEncoder.copyBufferToBuffer(bounceOutputs, 0, bounceReadback, 0, 96);
-				device.queue.submit([bounceEncoder.finish()]);
+				const copyEncoder = device.createCommandEncoder();
+				copyEncoder.copyBufferToBuffer(bounceOutputs, 0, bounceReadback, 0, 96);
+				device.queue.submit([copyEncoder.finish()]);
 				await bounceReadback.mapAsync(GPUMapMode.READ);
 				const bounceData = bounceReadback.getMappedRange().slice(0);
 				bounceReadback.unmap();
@@ -678,7 +740,7 @@
 				'multi-bounce radiance is not finite');
 			expect(twoBounceLuminance > oneBounceLuminance + 0.1,
 				`second bounce did not transport emissive energy (${oneBounceLuminance} -> ${twoBounceLuminance})`);
-			near(twoBounce.getFloat32(84, true), 1.0, 0.0002, 'multi-bounce sample count');
+			near(twoBounce.getFloat32(84, true), bounceSampleCount, 0.0002, 'multi-bounce sample count');
 			const directEmitter = uploadBuffer(device, makeEmitter(), storage, 'direct emitter');
 			const directEmitterParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 1]).buffer,
 				GPUBufferUsage.UNIFORM, 'direct emitter params');

@@ -92,24 +92,16 @@ uint32_t wangHash(uint32_t x) {
 	return sampling::hash32(x);
 }
 
-float rand01(uint32_t &state) {
-	return sampling::next1D(state);
-}
-
 static float powerHeuristic(float pdfA, float pdfB) {
 	const float a2 = pdfA * pdfA;
 	const float b2 = pdfB * pdfB;
 	return a2 / glm::max(a2 + b2, 1.0e-12f);
 }
 
-static float progressiveUnit(uint32_t index, uint32_t scramble) {
-	return sampling::progressive1D(index, scramble);
-}
-
-static glm::vec3 sampleUniformSphere(uint32_t &rng) {
-	const float z = 1.0f - 2.0f * rand01(rng);
+static glm::vec3 sampleUniformSphere(const glm::vec2 &sequence) {
+	const float z = 1.0f - 2.0f * sequence.x;
 	const float r = glm::sqrt(glm::max(0.0f, 1.0f - z * z));
-	const float phi = 2.0f * kPi * rand01(rng);
+	const float phi = 2.0f * kPi * sequence.y;
 	return glm::vec3(r * glm::cos(phi), z, r * glm::sin(phi));
 }
 
@@ -121,14 +113,12 @@ static void tangentBasis(const glm::vec3 &n, glm::vec3 &t, glm::vec3 &b) {
 	b = glm::cross(n, t);
 }
 
-glm::vec3 cosineHemisphere(const glm::vec3 &n, uint32_t &rng) {
-	const float u1 = rand01(rng);
-	const float u2 = rand01(rng);
-	const float r = glm::sqrt(u1);
-	const float phi = 2.0f * kPi * u2;
+glm::vec3 cosineHemisphere(const glm::vec3 &n, const glm::vec2 &sequence) {
+	const float r = glm::sqrt(sequence.x);
+	const float phi = 2.0f * kPi * sequence.y;
 	glm::vec3 t, b;
 	tangentBasis(n, t, b);
-	return glm::normalize(t * (r * glm::cos(phi)) + b * (r * glm::sin(phi)) + n * glm::sqrt(1.0f - u1));
+	return glm::normalize(t * (r * glm::cos(phi)) + b * (r * glm::sin(phi)) + n * glm::sqrt(1.0f - sequence.x));
 }
 
 static float ggxD(float ndh, float a) {
@@ -155,7 +145,8 @@ static glm::vec4 paletteColorLinear(const color::RGBA &rgba) {
 					 (float)color::srgbToLinear(rgba.b), (float)rgba.a / 255.0f);
 }
 
-static glm::vec3 sampleGgxVisibleHalf(const glm::vec3 &n, const glm::vec3 &wo, float a, uint32_t &rng) {
+static glm::vec3 sampleGgxVisibleHalf(const glm::vec3 &n, const glm::vec3 &wo, float a,
+									  const glm::vec2 &sequence) {
 	// Heitz isotropic GGX visible-normal sampling. Sampling the NDF alone
 	// wastes many grazing samples below the surface and produces bright,
 	// sparse highlights at practical sample counts.
@@ -167,10 +158,8 @@ static glm::vec3 sampleGgxVisibleHalf(const glm::vec3 &n, const glm::vec3 &wo, f
 	const glm::vec3 t1 = lensq > 1.0e-8f ? glm::vec3(-vh.y, vh.x, 0.0f) / glm::sqrt(lensq) :
 		glm::vec3(1.0f, 0.0f, 0.0f);
 	const glm::vec3 t2 = glm::cross(vh, t1);
-	const float u1 = rand01(rng);
-	const float u2 = rand01(rng);
-	const float r = glm::sqrt(u1);
-	const float phi = 2.0f * kPi * u2;
+	const float r = glm::sqrt(sequence.x);
+	const float phi = 2.0f * kPi * sequence.y;
 	const float diskX = r * glm::cos(phi);
 	float diskY = r * glm::sin(phi);
 	const float s = 0.5f * (1.0f + vh.z);
@@ -630,22 +619,24 @@ bool VoxelDDAPathTracer::visibleToLight(const glm::vec3 &orig, const glm::vec3 &
 	return h.t + 0.02f >= dist;
 }
 
-bool VoxelDDAPathTracer::sampleEmitLight(const glm::vec3 &p, const glm::vec3 &n, uint32_t &rng, int skipGrid,
-										 const glm::ivec3 &skipCell, glm::vec3 &dir, glm::vec3 &radiance,
-										 float &pdf) const {
+bool VoxelDDAPathTracer::sampleEmitLight(const glm::vec3 &p, const glm::vec3 &n, uint32_t sequenceIndex,
+										 uint32_t scramble, int skipGrid, const glm::ivec3 &skipCell,
+										 glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const {
 	radiance = glm::vec3(0.0f);
 	pdf = 0.0f;
 	const int nLights = (int)_scene.emitters.size();
 	if (nLights <= 0) {
 		return false;
 	}
-	int li = (int)(rand01(rng) * (float)nLights);
+	const float selection = sampling::sobol1D(sequenceIndex, scramble ^ 0x27d4eb2du);
+	int li = (int)(selection * (float)nLights);
 	if (li >= nLights) {
 		li = nLights - 1;
 	}
 	const PathTracerEmitter &light = _scene.emitters[li];
-	const glm::vec3 lightP = light.origin() + glm::vec3(light.edgeU) * rand01(rng) +
-								 glm::vec3(light.edgeV) * rand01(rng);
+	const glm::vec2 faceSample = sampling::sobol2D(sequenceIndex, scramble ^ 0xb5297a4du);
+	const glm::vec3 lightP = light.origin() + glm::vec3(light.edgeU) * faceSample.x +
+							 glm::vec3(light.edgeV) * faceSample.y;
 	const glm::vec3 worldN = light.normal();
 	glm::vec3 toL = lightP - p;
 	const float dist2 = glm::dot(toL, toL);
@@ -753,14 +744,14 @@ float VoxelDDAPathTracer::environmentPdf(const glm::vec3 &dir) const {
 	return (w / _envCdfSum) / angle;
 }
 
-bool VoxelDDAPathTracer::sampleHdri(uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance, float &pdf, int stratum,
-									int strata, float cdfUnit) const {
+bool VoxelDDAPathTracer::sampleHdri(uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir,
+									glm::vec3 &radiance, float &pdf) const {
 	radiance = glm::vec3(0.0f);
 	if (!_envIsHdri || _envCdfSum <= 0.0f || _envCdf.empty()) {
 		return false;
 	}
-	const float unit = cdfUnit >= 0.0f ? glm::fract(cdfUnit) :
-		((float)stratum + rand01(rng)) / (float)glm::max(strata, 1);
+	const glm::vec2 sequence = sampling::sobol2D(sequenceIndex, scramble);
+	const float unit = sampling::sobol1D(sequenceIndex, scramble ^ 0x9e3779b9u);
 	const float r = unit * _envCdfSum;
 	int lo = 0;
 	int hi = _envW * _envH - 1;
@@ -775,8 +766,8 @@ bool VoxelDDAPathTracer::sampleHdri(uint32_t &rng, glm::vec3 &dir, glm::vec3 &ra
 	const int idx = lo;
 	const int x = idx % _envW;
 	const int y = idx / _envW;
-	const float u = ((float)x + rand01(rng)) / (float)_envW;
-	const float v = ((float)y + rand01(rng)) / (float)_envH;
+	const float u = ((float)x + sequence.x) / (float)_envW;
+	const float v = ((float)y + sequence.y) / (float)_envH;
 	// Same frame as Yocto: sample in map space, then rotate by +azimuth.
 	// evalEnvironment rotates the world dir by -azimuth before lookup.
 	dir = glm::normalize(rotateYaw(latLongToDir(u, v), _state.hdriAzimuth));
@@ -790,25 +781,26 @@ bool VoxelDDAPathTracer::sampleHdri(uint32_t &rng, glm::vec3 &dir, glm::vec3 &ra
 	return pdf > 0.0f;
 }
 
-bool VoxelDDAPathTracer::sampleEnvironment(const glm::vec3 &n, uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance,
-										   float &pdf, int stratum, int strata, float cdfUnit) const {
+bool VoxelDDAPathTracer::sampleEnvironment(const glm::vec3 &n, uint32_t sequenceIndex, uint32_t scramble,
+										   glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const {
 	if (_envIsHdri && _envCdfSum > 0.0f) {
-		if (!sampleHdri(rng, dir, radiance, pdf, stratum, strata, cdfUnit)) {
+		if (!sampleHdri(sequenceIndex, scramble, dir, radiance, pdf)) {
 			return false;
 		}
 		return glm::dot(n, dir) > 0.0f && pdf > 0.0f;
 	}
-	dir = cosineHemisphere(n, rng);
+	dir = cosineHemisphere(n, sampling::sobol2D(sequenceIndex, scramble));
 	pdf = glm::max(0.0f, glm::dot(n, dir)) * kInvPi;
 	radiance = evalEnvironment(dir);
 	return pdf > 0.0f;
 }
 
-bool VoxelDDAPathTracer::sampleEnvironmentIso(uint32_t &rng, glm::vec3 &dir, glm::vec3 &radiance, float &pdf) const {
+bool VoxelDDAPathTracer::sampleEnvironmentIso(uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir,
+											  glm::vec3 &radiance, float &pdf) const {
 	if (_envIsHdri && _envCdfSum > 0.0f) {
-		return sampleHdri(rng, dir, radiance, pdf);
+		return sampleHdri(sequenceIndex, scramble, dir, radiance, pdf);
 	}
-	dir = sampleUniformSphere(rng);
+	dir = sampleUniformSphere(sampling::sobol2D(sequenceIndex, scramble));
 	pdf = 1.0f / (4.0f * kPi);
 	radiance = evalEnvironment(dir);
 	return pdf > 0.0f;
@@ -1047,7 +1039,7 @@ glm::vec3 VoxelDDAPathTracer::shadowTransmittance(const glm::vec3 &orig, const g
 
 glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3 &dir, float tmax, int skipGrid,
 										  const glm::ivec3 &skipCell, glm::vec3 &color, const glm::vec3 &throughput,
-										  uint32_t &rng) const {
+										  uint32_t sequenceIndex, uint32_t scramble) const {
 	glm::vec3 T(1.0f);
 	const glm::vec3 ndir = glm::normalize(dir);
 	// ANCHOR: Fog is a density field sampled along the ray. Do not
@@ -1069,9 +1061,10 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 	glm::vec3 envDir(0.0f);
 	glm::vec3 envRad(0.0f);
 	float envPdf = 0.0f;
-	const bool haveHdri = _envIsHdri && sampleEnvironmentIso(rng, envDir, envRad, envPdf) && envPdf > 1.0e-8f;
+	const bool haveHdri = _envIsHdri && sampleEnvironmentIso(sequenceIndex, scramble ^ 0x94d049bbu, envDir, envRad,
+															  envPdf) && envPdf > 1.0e-8f;
 	const float reach = glm::min(tmax, 64.0f);
-	const float t0 = rand01(rng) * kMediaStep;
+	const float t0 = sampling::sobol1D(sequenceIndex, scramble ^ 0xd1b54a35u) * kMediaStep;
 	const int n = (int)(reach / kMediaStep) + 2;
 	for (int i = 0; i < n; ++i) {
 		const float t = t0 + (float)i * kMediaStep;
@@ -1112,8 +1105,8 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 				glm::vec3 eldir(0.0f);
 				glm::vec3 elrad(0.0f);
 				float elpdf = 0.0f;
-				if (sampleEmitLight(orig + ndir * t, glm::vec3(0.0f), rng, -1, glm::ivec3(0), eldir, elrad,
-								   elpdf) &&
+				if (sampleEmitLight(orig + ndir * t, glm::vec3(0.0f), sequenceIndex + (uint32_t)i,
+									scramble ^ 0x369dea0fu, -1, glm::ivec3(0), eldir, elrad, elpdf) &&
 					elpdf > 1.0e-8f) {
 					const float hg = henyeyGreenstein(phase, glm::dot(ndir, eldir));
 					color += throughput * T * mist * hg * elrad / elpdf;
@@ -1193,7 +1186,7 @@ VoxelDDAPathTracer::Hit VoxelDDAPathTracer::trace(const glm::vec3 &orig, const g
 	return best;
 }
 
-glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &dir, uint32_t &rng, int sampleIndex,
+glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &dir, int sampleIndex,
 										uint32_t pixelScramble, glm::vec3 &guideAlbedo, glm::vec3 &guideNormal,
 										float &guideDepth, float &guideFeature) const {
 	glm::vec3 o = orig;
@@ -1207,7 +1200,6 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 	bool environmentMisValid = false;
 	bool emitterMisValid = false;
 	float previousBsdfPdf = 0.0f;
-	int previousEnvironmentSamples = 1;
 	const int maxBounces = glm::max(1, _state.params.bounces);
 	const float clampVal = glm::max(1.0f, _state.params.clamp);
 	guideAlbedo = glm::vec3(0.0f);
@@ -1216,9 +1208,12 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 	guideFeature = 1.0f;
 
 	for (int b = 0; b < maxBounces; ++b) {
+		const uint32_t sequenceIndex = (uint32_t)(sampleIndex * maxBounces + b);
+		const uint32_t bounceScramble = pixelScramble ^ ((uint32_t)(b + 1) * 0x9e3779b9u);
 		const Hit hit = trace(o, d, skipGrid, skipCell);
 		const float tmax = hit.hit ? hit.t : 1.0e30f;
-		const glm::vec3 Tvol = marchVolume(o, d, tmax, skipGrid, skipCell, color, throughput, rng);
+		const glm::vec3 Tvol = marchVolume(o, d, tmax, skipGrid, skipCell, color, throughput, sequenceIndex,
+										  bounceScramble ^ 0x7f4a7c15u);
 		throughput *= Tvol;
 		if (b == 0) {
 			const float extinct = 1.0f - (Tvol.x + Tvol.y + Tvol.z) * (1.0f / 3.0f);
@@ -1265,7 +1260,7 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 			if (b == 0 || specularChain) {
 				color += throughput * evalEnvironment(d);
 			} else if (environmentMisValid) {
-				const float lightPdf = (float)previousEnvironmentSamples * environmentPdf(d);
+				const float lightPdf = environmentPdf(d);
 				const float weight = powerHeuristic(previousBsdfPdf, lightPdf);
 				color += throughput * evalEnvironment(d) * weight;
 			}
@@ -1308,7 +1303,7 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 			glm::vec3 rd = glm::refract(d, ns, eta);
 			const bool tir = glm::dot(rd, rd) < 1.0e-12f;
 			const float F = tir ? 1.0f : fresnelSchlick(cosi, ior);
-			if (tir || rand01(rng) < F) {
+			if (tir || sampling::sobol1D(sequenceIndex, bounceScramble ^ 0x51ed270bu) < F) {
 				d = glm::reflect(d, ns);
 				o = hit.pos + ns * kSpawnEps;
 			} else {
@@ -1321,7 +1316,8 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 			continue;
 		}
 
-		if (!hit.ground && hit.surf == kSurfAlpha && rand01(rng) >= hit.opacity) {
+		if (!hit.ground && hit.surf == kSurfAlpha &&
+			sampling::sobol1D(sequenceIndex, bounceScramble ^ 0x85ebca6bu) >= hit.opacity) {
 			environmentMisValid = false;
 			emitterMisValid = false;
 			o = hit.pos + d * kSpawnEps;
@@ -1341,18 +1337,12 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 		const float a = rough * rough;
 		specularChain = false;
 
-		// Spend the light-sampling budget where it is most visible. Four
-		// progressive HDRI samples stabilize primary voxel faces and ground;
-		// later bounces use one sample because their contribution is smaller.
-		const int directEnvironmentSamples = _envIsHdri ? (b == 0 ? 4 : 1) : 1;
-		for (int lightSample = 0; lightSample < directEnvironmentSamples; ++lightSample) {
+		// Single environment next-event sample with full MIS (1 NEE + 1 BSDF).
+		{
 			glm::vec3 ldir(0.0f);
 			glm::vec3 lrad(0.0f);
 			float lpdf = 0.0f;
-			const uint32_t sequenceIndex = (uint32_t)(sampleIndex * directEnvironmentSamples + lightSample);
-			const uint32_t sequenceScramble = pixelScramble ^ ((uint32_t)b + 1u) * 0x9e3779b9u;
-			const float cdfUnit = _envIsHdri ? progressiveUnit(sequenceIndex, sequenceScramble) : -1.0f;
-			if (sampleEnvironment(n, rng, ldir, lrad, lpdf, lightSample, directEnvironmentSamples, cdfUnit)) {
+			if (sampleEnvironment(n, sequenceIndex, bounceScramble ^ 0x68bc21ebu, ldir, lrad, lpdf)) {
 				const float ndl = glm::dot(n, ldir);
 				if (ndl > 1.0e-6f && lpdf > 0.0f) {
 					const glm::vec3 T = shadowTransmittance(p, ldir, 1.0e30f, skipGrid, skipCell, -1, glm::ivec3(0));
@@ -1360,10 +1350,9 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 						const glm::vec3 fcos = evalOpaqueFcos(albedo, metal, hit.spec, a, n, wo, ldir);
 						const float bsdfPdf = opaquePdf(metal, hit.spec, albedo, a, n, wo, ldir);
 						const float misWeight = _envIsHdri && b + 1 < maxBounces
-							? powerHeuristic(lpdf * (float)directEnvironmentSamples, bsdfPdf)
+							? powerHeuristic(lpdf, bsdfPdf)
 							: 1.0f;
-						color += throughput * fcos * lrad * T * misWeight /
-								 (lpdf * (float)directEnvironmentSamples);
+						color += throughput * fcos * lrad * T * misWeight / lpdf;
 					}
 				}
 			}
@@ -1372,7 +1361,8 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 		glm::vec3 eldir(0.0f);
 		glm::vec3 elrad(0.0f);
 		float elpdf = 0.0f;
-		if (sampleEmitLight(p, n, rng, skipGrid, skipCell, eldir, elrad, elpdf)) {
+		if (sampleEmitLight(p, n, sequenceIndex, bounceScramble ^ 0x165667b1u, skipGrid, skipCell, eldir, elrad,
+							elpdf)) {
 			const float ndl = glm::dot(n, eldir);
 			if (ndl > 1.0e-6f && elpdf > 0.0f) {
 				const glm::vec3 fcos = evalOpaqueFcos(albedo, metal, hit.spec, a, n, wo, eldir);
@@ -1386,12 +1376,14 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 		const float ndv = glm::max(glm::dot(n, wo), 0.0f);
 		const glm::vec3 Fv = fresnelSchlick3(f0, ndv);
 		const float pSpec = glm::clamp(0.25f + 0.75f * (Fv.x + Fv.y + Fv.z) * (1.0f / 3.0f), 0.15f, 0.95f);
+		const glm::vec2 bsdfSequence = sampling::sobol2D(sequenceIndex, bounceScramble ^ 0x02e5be93u);
+		const float specularChoice = sampling::sobol1D(sequenceIndex, bounceScramble ^ 0x7f4a7c15u);
 		glm::vec3 wi(0.0f);
-		if (rand01(rng) < pSpec) {
-			const glm::vec3 h = sampleGgxVisibleHalf(n, wo, a, rng);
+		if (specularChoice < pSpec) {
+			const glm::vec3 h = sampleGgxVisibleHalf(n, wo, a, bsdfSequence);
 			wi = glm::reflect(-wo, h);
 		} else {
-			wi = cosineHemisphere(n, rng);
+			wi = cosineHemisphere(n, bsdfSequence);
 		}
 		const float pdf = opaquePdf(metal, hit.spec, albedo, a, n, wo, wi);
 		if (glm::dot(n, wi) <= 1.0e-6f || pdf <= 1.0e-6f) {
@@ -1400,12 +1392,20 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 		throughput *= evalOpaqueFcos(albedo, metal, hit.spec, a, n, wo, wi) / pdf;
 		previousBsdfPdf = pdf;
 		environmentMisValid = _envIsHdri;
-		previousEnvironmentSamples = directEnvironmentSamples;
 		emitterMisValid = !_scene.emitters.empty();
 		d = wi;
 		o = p;
-		if (glm::max(throughput.x, glm::max(throughput.y, throughput.z)) < 0.01f) {
-			break;
+		// Unbiased Russian roulette replaces the old hard throughput cutoff,
+		// which silently dropped the residual energy of dim paths (darkened
+		// deep-indirect corners). Terminate probabilistically and rescale
+		// survivors so the expected contribution is unchanged.
+		const float throughputMax = glm::max(throughput.x, glm::max(throughput.y, throughput.z));
+		if (throughputMax < 0.2f) {
+			const float survival = glm::max(throughputMax, 1.0e-4f);
+			if (sampling::sobol1D(sequenceIndex, bounceScramble ^ 0x5be0cd19u) > survival) {
+				break;
+			}
+			throughput /= survival;
 		}
 	}
 
@@ -1423,9 +1423,8 @@ void VoxelDDAPathTracer::accumulateSample() {
 	app::for_parallel(0, h, [this, w, h, sample](int y0, int y1) {
 		for (int y = y0; y < y1; ++y) {
 			for (int x = 0; x < w; ++x) {
-				uint32_t rng = wangHash((uint32_t)(x + y * w + sample * 1973u + 1u));
 				const uint32_t pixelScramble = wangHash((uint32_t)(x + y * w) ^ 0xa511e9b3u);
-				const glm::vec2 cameraSample = sampling::progressive2D((uint32_t)sample, pixelScramble);
+				const glm::vec2 cameraSample = sampling::sobol2D((uint32_t)sample, pixelScramble);
 				const float jx = (float)x + cameraSample.x;
 				const float jy = (float)y + cameraSample.y;
 				const math::Ray ray = pathTracerCameraRay(_cameraData, jx, jy);
@@ -1433,8 +1432,8 @@ void VoxelDDAPathTracer::accumulateSample() {
 				glm::vec3 guideN(0.0f);
 				float guideDepth = 0.0f;
 				float guideFeature = 1.0f;
-				glm::vec4 c = tracePath(ray.origin, ray.direction, rng, sample, pixelScramble, guideA, guideN, guideDepth,
-									guideFeature);
+				glm::vec4 c = tracePath(ray.origin, ray.direction, sample, pixelScramble, guideA, guideN, guideDepth,
+										guideFeature);
 				if (sample >= 16) {
 					const int p = y * w + x;
 					const float historyScale = 1.0f / (float)sample;
