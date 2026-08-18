@@ -37,7 +37,7 @@ struct alignas(16) PathTracerMaterial {
 	glm::vec4 volumeEmissionAttenuation{0.0f};
 	// metal, roughness, specular, density
 	glm::vec4 surface{0.0f, 0.1f, 0.5f, 0.0f};
-	// phase, media scatter, reserved, reserved
+	// rim light (Henyey-Greenstein asymmetry g), scatter, reserved, reserved
 	glm::vec4 volume{0.0f};
 	// surface type, reserved, reserved, reserved
 	glm::uvec4 flags{0u};
@@ -72,10 +72,14 @@ struct alignas(16) PathTracerMaterial {
 	inline float density() const {
 		return surface.w;
 	}
-	inline float phase() const {
+	// Henyey-Greenstein asymmetry g. The locked UI name is "Rim light":
+	// g > 0 forward scatter (sun-edge glow), g < 0 back scatter.
+	inline float rimLight() const {
 		return volume.x;
 	}
-	inline float media() const {
+	// How much environment light the volume shows (smoke vs cloud). Locked UI
+	// name "Scatter". This is not emission.
+	inline float scatter() const {
 		return volume.y;
 	}
 	inline uint8_t surfaceType() const {

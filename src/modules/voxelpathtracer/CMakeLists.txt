@@ -19,6 +19,8 @@ engine_add_module(TARGET ${LIB} SRCS ${SRCS} DEPENDENCIES yocto voxelrender imag
 
 set(TEST_SRCS
 	tests/PathTracerTest.cpp
+	tests/MediaReachTest.cpp
+	tests/MediaMaterialTest.cpp
 	tests/webgpu/PathTracerTraversalWebGPU.html
 	tests/webgpu/README.md
 )

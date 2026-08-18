@@ -42,8 +42,10 @@ private:
 		float rough = 0.1f;
 		float spec = 0.5f;
 		float density = 0.0f;
-		float phase = 0.0f;
-		float media = 0.0f;
+		// Henyey-Greenstein asymmetry g (locked UI name "Rim light").
+		float rimLight = 0.0f;
+		// Environment-light response (locked UI name "Scatter").
+		float scatter = 0.0f;
 		uint8_t surf = 0;
 	};
 
@@ -113,7 +115,7 @@ private:
 						   glm::vec3 &radiance, float &pdf) const;
 	bool sampleEnvironmentIso(uint32_t sequenceIndex, uint32_t scramble, glm::vec3 &dir, glm::vec3 &radiance,
 							  float &pdf) const;
-	bool sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albedo, float &density, float &phase, float &scatter,
+	bool sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albedo, float &density, float &rimLight, float &scatter,
 					 glm::vec3 &emit) const;
 	glm::vec3 fieldMediaT(const glm::vec3 &orig, const glm::vec3 &dir, float tmax) const;
 	glm::vec3 marchVolume(const glm::vec3 &orig, const glm::vec3 &dir, float tmax, int skipGrid,
@@ -158,6 +160,32 @@ public:
 	bool started() const override;
 	bool update(int *currentSample = nullptr) override;
 	image::ImagePtr image() override;
+
+	// Test hook: true when at least one material was classified as a
+	// participating medium. When false every media march early-returns.
+	inline bool hasMediaForTest() const {
+		return _hasMedia;
+	}
+
+	// Test hook: probe the media field at a world position. Returns true when a
+	// participating medium is present there, with its density/scatter/rimLight.
+	// Distinguishes "material classified as media" from "media actually found
+	// by the world->grid lookup the marcher uses".
+	inline bool sampleMediaForTest(const glm::vec3 &worldPos, float &density, float &scatter, float &rimLight) const {
+		glm::vec3 albedo(0.0f);
+		glm::vec3 emit(0.0f);
+		return sampleMedia(worldPos, albedo, density, rimLight, scatter, emit);
+	}
+
+	// Test hook: run marchVolume along a ray and report both the transmittance
+	// it returns and the radiance it accumulated. This is the last link in the
+	// chain: if sampleMedia finds the medium but this adds no color, the bug is
+	// inside the volume integrator itself.
+	inline glm::vec3 marchVolumeForTest(const glm::vec3 &orig, const glm::vec3 &dir, float tmax,
+										glm::vec3 &accumulatedColor) const {
+		accumulatedColor = glm::vec3(0.0f);
+		return marchVolume(orig, dir, tmax, -1, glm::ivec3(0), accumulatedColor, glm::vec3(1.0f), 0u, 0x12345u);
+	}
 };
 
 } // namespace voxelpathtracer

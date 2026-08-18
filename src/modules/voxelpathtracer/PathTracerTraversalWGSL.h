@@ -123,7 +123,7 @@ struct PathTracerMediaData {
 struct PathTracerMediaSample {
     albedoDensity: vec4<f32>,
     emissionScatter: vec4<f32>,
-    phaseData: vec4<f32>,
+    rimLightData: vec4<f32>,
     cellGrid: vec4<i32>,
     data: vec4<u32>,
 };
@@ -858,7 +858,7 @@ fn mediaAt(worldPosition: vec3<f32>) -> PathTracerMediaSample {
 	var sample: PathTracerMediaSample;
 	sample.albedoDensity = vec4<f32>(0.0);
 	sample.emissionScatter = vec4<f32>(0.0);
-	sample.phaseData = vec4<f32>(0.0);
+	sample.rimLightData = vec4<f32>(0.0);
 	sample.cellGrid = vec4<i32>(0, 0, 0, -1);
 	sample.data = vec4<u32>(0u);
 	for (var gridIndex = 0u; gridIndex < primaryParams.gridCount; gridIndex += 1u) {
@@ -881,7 +881,7 @@ fn mediaAt(worldPosition: vec3<f32>) -> PathTracerMediaSample {
 			clamp(material.surface.w, 0.0, 1.0));
 		sample.emissionScatter = vec4<f32>(material.volumeEmissionAttenuation.xyz,
 			clamp(material.volume.y, 0.0, 1.0));
-		sample.phaseData.x = clamp(material.volume.x, -0.95, 0.95);
+		sample.rimLightData.x = clamp(material.volume.x, -0.95, 0.95);
 		sample.cellGrid = vec4<i32>(cell, i32(gridIndex));
 		sample.data = vec4<u32>(materialIndex, gridIndex, surfaceMedia, 1u);
 		return sample;
@@ -894,8 +894,8 @@ fn volumeSigmaT(density: f32) -> f32 {
 	return clampedDensity * clampedDensity * 2.0 + clampedDensity * 0.2;
 }
 
-fn henyeyGreenstein(phase: f32, cosine: f32) -> f32 {
-	let clampedPhase = clamp(phase, -0.95, 0.95);
+fn henyeyGreenstein(rimLight: f32, cosine: f32) -> f32 {
+	let clampedPhase = clamp(rimLight, -0.95, 0.95);
 	let phase2 = clampedPhase * clampedPhase;
 	let denominator = 1.0 + phase2 - 2.0 * clampedPhase * cosine;
 	return (1.0 - phase2) /
@@ -955,7 +955,7 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 			shadowRay.skipCellGrid = vec4<i32>(0, 0, 0, -1);
 			shadowRay.flags = vec4<u32>(1u, 0u, 0u, 0u);
 			if (traceTransportScene(shadowRay, primaryParams.gridCount).data.y == 0u) {
-				let phase = henyeyGreenstein(medium.phaseData.x, dot(direction, lightDirection));
+				let phase = henyeyGreenstein(medium.rimLightData.x, dot(direction, lightDirection));
 				let environmentContribution = transmission * medium.albedoDensity.xyz *
 					medium.emissionScatter.w * interaction * phase * environmentSample.radiance.xyz /
 					environmentSample.directionPdf.w;
@@ -966,7 +966,7 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 			let emitterSample = sampleEmitter(position, vec3<f32>(0.0), vec4<i32>(0, 0, 0, -1),
 				sequenceIndex + stepIndex, scramble ^ 0x369dea0fu);
 			if (emitterSample.directionPdf.w > 1.0e-8) {
-				let phase = henyeyGreenstein(medium.phaseData.x,
+				let phase = henyeyGreenstein(medium.rimLightData.x,
 					dot(direction, emitterSample.directionPdf.xyz));
 				let emitterContribution = transmission * medium.albedoDensity.xyz *
 					medium.emissionScatter.w * interaction * phase *
@@ -1070,6 +1070,14 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
 				radiance += throughput * evalEnvironment(ray.directionMax.xyz) *
 					powerHeuristic(previousBsdfPdf, previousEnvironmentPdf);
 			}
+			// Miss pixels have no surface. A zero guide normal makes the
+			// a-trous pow(n.n, 32) term zero -- including the pixel's own
+			// weight -- so denoiseMain writes black over the HDRI.
+			if (bounce == 0u && lightingData.flags.y == 0u &&
+				dot(output.normalDepth.xyz, output.normalDepth.xyz) <= 1.0e-12) {
+				output.albedoFeature = vec4<f32>(evalEnvironment(ray.directionMax.xyz), 1.0);
+				output.normalDepth = vec4<f32>(-normalize(ray.directionMax.xyz), 0.0);
+			}
             break;
         }
 
@@ -1157,6 +1165,8 @@ R"WGSL(fn shadePrimary(pixelIndex: u32, initialRay: PathTracerRay,
             break;
         }
 
+)WGSL"
+R"WGSL(
 		specularChain = false;
         let roughness = clamp(material.surface.y, 0.04, 1.0);
         let alpha = roughness * roughness;
@@ -1592,8 +1602,15 @@ fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let neighborColor = denoisePing[j].xyz;
             let albedoDelta = center.albedo - neighbor.albedo;
             let albedoWeight = exp(-dot(albedoDelta, albedoDelta) * 80.0);
-            let ndot = clamp(dot(center.normal, neighbor.normal), 0.0, 1.0);
-            let normalWeight = pow(ndot, 32.0);
+            let nlen0 = dot(center.normal, center.normal);
+            let nlen1 = dot(neighbor.normal, neighbor.normal);
+            var normalWeight = 1.0;
+            if (nlen0 > 1.0e-12 && nlen1 > 1.0e-12) {
+                let ndot = clamp(dot(center.normal, neighbor.normal), 0.0, 1.0);
+                normalWeight = pow(ndot, 32.0);
+            } else if (nlen0 > 1.0e-12 || nlen1 > 1.0e-12) {
+                normalWeight = 0.0;
+            }
             let depthScale = 0.03 * max(center.depth, neighbor.depth) + 0.01;
             let depthDelta = abs(center.depth - neighbor.depth) / depthScale;
             let depthWeight = exp(-depthDelta * depthDelta);

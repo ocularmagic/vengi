@@ -204,8 +204,8 @@ TEST_F(PathTracerTest, testPortableMaterialLayout) {
 	EXPECT_FLOAT_EQ(0.6f, material.roughness());
 	EXPECT_FLOAT_EQ(0.5f, material.specular());
 	EXPECT_FLOAT_EQ(0.3f, material.density());
-	EXPECT_FLOAT_EQ(0.25f, material.phase());
-	EXPECT_FLOAT_EQ(0.75f, material.media());
+	EXPECT_FLOAT_EQ(0.25f, material.rimLight());
+	EXPECT_FLOAT_EQ(0.75f, material.scatter());
 	EXPECT_EQ(3u, material.surfaceType());
 }
 
@@ -596,6 +596,8 @@ TEST_F(PathTracerTest, testHMec) {
 	ASSERT_TRUE(pathTracer.stop());
 }
 
+static int neighborMad(const image::ImagePtr &img);
+
 TEST_F(PathTracerTest, testRenderMaterialScene) {
 	const io::ArchivePtr &archive = io::openFilesystemArchive(_testApp->filesystem());
 	io::FileDescription fileDesc;
@@ -607,26 +609,47 @@ TEST_F(PathTracerTest, testRenderMaterialScene) {
 		return;
 	}
 
+	// VENGI_MATERIAL_TEST_HQ=1 bumps resolution and samples for a deliverable
+	// PNG. The default fast path (256/64, ~3 min) stays in the CI suite.
+	const char *hqEnv = getenv("VENGI_MATERIAL_TEST_HQ");
+	const bool hq = hqEnv != nullptr && hqEnv[0] == '1';
+	const int resolution = hq ? 512 : 256;
+	const int samples = hq ? 256 : 64;
+
 	video::Camera cam;
 	cam.setSize(glm::ivec2(800, 600));
 	cam.setRotationType(video::CameraRotationType::Target);
-	cam.setWorldPosition(glm::vec3(0.0f, 85.0f, 135.0f));
+	// A 3/4 view from the right-front separates the two rows (z=0 and
+	// z=24) diagonally so the back row's transparent/volumetric clumps
+	// peek between the front row instead of being directly occluded.
+	cam.setWorldPosition(glm::vec3(50.0f, 50.0f, 110.0f));
 	cam.setTarget(glm::vec3(0.0f, 0.0f, 12.0f));
 	cam.lookAt(glm::vec3(0.0f, 0.0f, 12.0f));
-	cam.setFieldOfView(55.0f);
+	cam.setFieldOfView(50.0f);
 	cam.update(0.0);
 
-	voxelpathtracer::PathTracer pathTracer;
-	pathTracer.state().params.resolution = 1024;
-	pathTracer.state().params.samples = 128;
+	// Product path: Voxel DDA + SVGF. The Yocto mesh tracer has no temporal
+	// denoise and was leaving the 512 spp PNG as raw Monte Carlo grain.
+	voxelpathtracer::VoxelDDAPathTracer pathTracer;
+	pathTracer.state().params.resolution = resolution;
+	pathTracer.state().params.samples = samples;
+	pathTracer.state().params.batch = samples;
+	pathTracer.state().params.denoise = true;
+	pathTracer.state().params.adaptive = true;
 	ASSERT_TRUE(pathTracer.start(sceneGraph, &cam));
+	pathTracer.state().params.denoise = true;
+	pathTracer.state().params.adaptive = true;
 	EXPECT_TRUE(pathTracer.state().hdriEnvironment);
 	EXPECT_FALSE(pathTracer.state().hdriPath.empty());
+	EXPECT_FALSE(pathTracer.state().params.envhidden);
+	EXPECT_TRUE(pathTracer.state().filmic);
 	while (!pathTracer.update()) {
-		_testApp->wait(100);
+		_testApp->wait(0);
 	}
 	const image::ImagePtr &img = pathTracer.image();
 	ASSERT_TRUE(img && img->isLoaded());
+	const int mad = neighborMad(img);
+	EXPECT_LT(mad, 30) << "material scene still grainy after DDA denoise (mad=" << mad << ")";
 	const io::FilePtr &file = _testApp->filesystem()->open("material-test-render.png", io::FileMode::SysWrite);
 	io::FileStream stream(file);
 	ASSERT_TRUE(image::writePNG(img, stream));
@@ -719,6 +742,28 @@ TEST_F(PathTracerTest, testCreatePathTracerInterface) {
 	ASSERT_TRUE(tracer != nullptr);
 	EXPECT_FALSE(tracer->started());
 	delete tracer;
+}
+
+TEST_F(PathTracerTest, testRestartStartsWhenIdle) {
+	// Settings changes after Done call restart(). That used to no-op because
+	// the tracer had already cleared started(), so Hide environment / HDRI
+	// toggles after a finished black frame never re-traced.
+	scenegraph::SceneGraph sceneGraph;
+	addUnitCube(sceneGraph);
+	sceneGraph.node(0).setProperty(scenegraph::PropEnvHidden, "false");
+	video::Camera cam = testCamera();
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 32;
+	tracer.state().params.samples = 1;
+	tracer.state().params.batch = 1;
+	EXPECT_FALSE(tracer.started());
+	ASSERT_TRUE(tracer.restart(sceneGraph, &cam));
+	EXPECT_TRUE(tracer.started());
+	ASSERT_TRUE(tracer.update());
+	EXPECT_FALSE(tracer.started());
+	ASSERT_TRUE(tracer.restart(sceneGraph, &cam));
+	EXPECT_TRUE(tracer.started());
+	ASSERT_TRUE(tracer.stop());
 }
 
 TEST_F(PathTracerTest, testHideEnvironmentDefaultsOn) {
@@ -1474,6 +1519,33 @@ TEST_F(PathTracerTest, testVoxelDDAStudioBackgroundIsBright) {
 	EXPECT_GT((int)c.r, 200);
 	EXPECT_GT((int)c.g, 200);
 	EXPECT_GT((int)c.b, 200);
+	ASSERT_TRUE(tracer.stop());
+}
+
+TEST_F(PathTracerTest, testVoxelDDADenoiseKeepsVisibleEnvironment) {
+	// Miss pixels used to leave a zero guide normal. The a-trous
+	// pow(n.n, 32) term then zeroed every weight -- including the pixel's
+	// own -- and denoiseColor wrote black over a visible environment.
+	scenegraph::SceneGraph sceneGraph;
+	sceneGraph.node(0).setProperty(scenegraph::PropEnvHidden, "false");
+	video::Camera cam = testCamera();
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 32;
+	tracer.state().params.samples = 4;
+	tracer.state().params.batch = 4;
+	tracer.state().params.bounces = 1;
+	tracer.state().params.denoise = true;
+	ASSERT_TRUE(tracer.start(sceneGraph, &cam));
+	tracer.state().params.denoise = true;
+	ASSERT_TRUE(tracer.update());
+	const image::ImagePtr &img = tracer.image();
+	ASSERT_TRUE(img);
+	ASSERT_TRUE(img->isLoaded());
+	const color::RGBA c = img->colorAt(img->width() / 2, img->height() / 2);
+	EXPECT_GT((int)c.r, 200) << "denoise blacked out the visible environment";
+	EXPECT_GT((int)c.g, 200);
+	EXPECT_GT((int)c.b, 200);
+	EXPECT_EQ((int)c.a, 255);
 	ASSERT_TRUE(tracer.stop());
 }
 

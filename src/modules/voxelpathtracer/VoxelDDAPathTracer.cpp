@@ -826,7 +826,7 @@ bool VoxelDDAPathTracer::pointInVoxel(const glm::vec3 &worldPos) const {
 	return false;
 }
 
-bool VoxelDDAPathTracer::sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albedo, float &density, float &phase,
+bool VoxelDDAPathTracer::sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albedo, float &density, float &rimLight,
 									 float &scatter, glm::vec3 &emit) const {
 	for (const PathTracerGrid &grid : _scene.grids) {
 		const glm::vec3 local = glm::vec3(grid.invWorldMat * glm::vec4(worldPos, 1.0f)) + grid.pivot();
@@ -845,8 +845,8 @@ bool VoxelDDAPathTracer::sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albed
 		}
 		albedo = material.albedo();
 		density = material.density();
-		phase = material.phase();
-		scatter = material.media();
+		rimLight = material.rimLight();
+		scatter = material.scatter();
 		emit = material.volumeEmission();
 		return true;
 	}
@@ -868,10 +868,10 @@ glm::vec3 VoxelDDAPathTracer::fieldMediaT(const glm::vec3 &orig, const glm::vec3
 		}
 		glm::vec3 albedo(0.0f);
 		float density = 0.0f;
-		float phase = 0.0f;
+		float rimLight = 0.0f;
 		float scatter = 0.0f;
 		glm::vec3 unusedEmit(0.0f);
-		if (!sampleMedia(orig + ndir * t, albedo, density, phase, scatter, unusedEmit)) {
+		if (!sampleMedia(orig + ndir * t, albedo, density, rimLight, scatter, unusedEmit)) {
 			continue;
 		}
 		T *= glm::exp(-volumeSigmaT(density) * kMediaStep);
@@ -1078,10 +1078,10 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 		}
 		glm::vec3 albedo(0.0f);
 		float density = 0.0f;
-		float phase = 0.0f;
+		float rimLight = 0.0f;
 		float scatter = 0.0f;
 		glm::vec3 emit(0.0f);
-		if (!sampleMedia(orig + ndir * t, albedo, density, phase, scatter, emit)) {
+		if (!sampleMedia(orig + ndir * t, albedo, density, rimLight, scatter, emit)) {
 			continue;
 		}
 		const float sig = volumeSigmaT(density);
@@ -1098,12 +1098,12 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 			// dim (and a recess shadows it) so 0 vs 1 looked identical.
 			const glm::vec3 rimDir = haveHdri ? envDir : keyDir;
 			const float facing = glm::pow(glm::max(glm::dot(ndir, rimDir), 0.0f), 2.0f);
-			const float cloud = scatter * 0.55f * (1.0f + phase * 2.5f * facing);
+			const float cloud = scatter * 0.55f * (1.0f + rimLight * 2.5f * facing);
 			color += throughput * T * albedo * cloud;
 			if (haveHdri) {
 				const glm::vec3 Tr = shadowTransmittance(orig + ndir * t, envDir, 1.0e30f, -1, glm::ivec3(0),
 														 -1, glm::ivec3(0));
-				const float hg = henyeyGreenstein(phase, glm::dot(ndir, envDir));
+				const float hg = henyeyGreenstein(rimLight, glm::dot(ndir, envDir));
 				color += throughput * T * mist * hg * envRad * Tr / envPdf;
 			}
 			if (!_scene.emitters.empty()) {
@@ -1113,7 +1113,7 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 				if (sampleEmitLight(orig + ndir * t, glm::vec3(0.0f), sequenceIndex + (uint32_t)i,
 									scramble ^ 0x369dea0fu, -1, glm::ivec3(0), eldir, elrad, elpdf) &&
 					elpdf > 1.0e-8f) {
-					const float hg = henyeyGreenstein(phase, glm::dot(ndir, eldir));
+					const float hg = henyeyGreenstein(rimLight, glm::dot(ndir, eldir));
 					color += throughput * T * mist * hg * elrad / elpdf;
 				}
 			}
@@ -1154,8 +1154,8 @@ bool VoxelDDAPathTracer::traceGrid(const PathTracerGrid &grid, int gridIndex, co
 	hit.rough = material.roughness();
 	hit.spec = material.specular();
 	hit.density = material.density();
-	hit.phase = material.phase();
-	hit.media = material.media();
+	hit.rimLight = material.rimLight();
+	hit.scatter = material.scatter();
 	hit.surf = material.surfaceType();
 	return true;
 }
@@ -1271,6 +1271,13 @@ glm::vec4 VoxelDDAPathTracer::tracePath(const glm::vec3 &orig, const glm::vec3 &
 			}
 			if (b == 0 && !_state.params.envhidden) {
 				alpha = 1.0f;
+				// Miss pixels have no surface. A zero guide normal makes the
+				// a-trous pow(n.n, 32) term zero -- including the pixel's own
+				// weight -- so denoiseColor writes black over the HDRI.
+				if (glm::length2(guideNormal) <= 1.0e-12f) {
+					guideAlbedo = evalEnvironment(d);
+					guideNormal = -d;
+				}
 			} else if (b == 0 && _state.params.envhidden && alpha > 1.0e-4f) {
 				// RGB is premultiplied in-scatter. ImGui blends rgb*a over
 				// the panel; divide so thin fog keeps its albedo instead
@@ -1520,10 +1527,17 @@ bool VoxelDDAPathTracer::allPixelsConverged() const {
 
 bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera) {
 	applyAppearanceFromScene(sceneGraph);
+	Log::info("DDA start: hdriEnv=%s hdriPath='%s' envhidden=%s filmic=%s",
+		_state.hdriEnvironment ? "true" : "false",
+		_state.hdriPath.c_str(),
+		_state.params.envhidden ? "true" : "false",
+		_state.filmic ? "true" : "false");
 	if (_state.hdriEnvironment && !_state.hdriPath.empty()) {
 		if (!loadHdri(_state.hdriPath)) {
-			Log::warn("HDRI disabled after failed load");
+			Log::warn("HDRI disabled after failed load of '%s'", _state.hdriPath.c_str());
 			_state.hdriEnvironment = false;
+		} else {
+			Log::info("HDRI loaded: %dx%d cdfSum=%f", _envW, _envH, (double)_envCdfSum);
 		}
 	} else {
 		_envIsHdri = false;
@@ -1599,10 +1613,9 @@ bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const v
 }
 
 bool VoxelDDAPathTracer::restart(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera) {
-	if (!started()) {
-		return false;
+	if (started()) {
+		stop();
 	}
-	stop();
 	return start(sceneGraph, camera);
 }
 
@@ -1684,8 +1697,11 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			_webGPUScenePending = !_webGPU.uploadScene(_scene);
 		}
 		if (!_webGPUScenePending && _webGPUEnvironmentPending && _webGPU.ready()) {
-			_webGPUEnvironmentPending = !_webGPU.uploadEnvironment(_envRgba.data(), _envCdf.data(),
-				static_cast<uint32_t>(_envW), static_cast<uint32_t>(_envH), _envCdfSum);
+			const bool uploaded = _webGPU.uploadEnvironment(_envRgba.data(), _envCdf.data(),
+					static_cast<uint32_t>(_envW), static_cast<uint32_t>(_envH), _envCdfSum);
+			_webGPUEnvironmentPending = !uploaded;
+			Log::info("WebGPU env upload: %s (w=%i h=%i cdfSum=%f)",
+				uploaded ? "ok" : "failed", _envW, _envH, (double)_envCdfSum);
 		}
 		if (_webGPU.state() == PathTracerWebGPUState::Failed) {
 			const core::String &jsMessage = _webGPU.fallbackMessage();
@@ -1712,6 +1728,18 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 					_webGPUDenoiseSeeded = true;
 					_webGPUDispatchPending = false;
 					_webGPULifecycle.invalidRetry = false;
+					// Check if the batch produced all-black output
+					bool allBlack = true;
+					const uint8_t *bytes = _webGPUImage.data();
+					for (uint32_t i = 0; i < pixelCount; ++i) {
+						if (bytes[i * 4 + 3] > 0u) {
+							allBlack = false;
+							break;
+						}
+					}
+					Log::info("WebGPU batch sample=%i pixels=%u unconverged=%u allBlack=%s first=%i,%i,%i,%i",
+							_sample, pixelCount, unconverged, allBlack ? "true" : "false",
+							(int)bytes[0], (int)bytes[1], (int)bytes[2], (int)bytes[3]);
 				} else {
 					Log::warn("WebGPU returned invalid batch data at sample %i", _sample);
 					_webGPUDispatchPending = false;
@@ -1729,6 +1757,10 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			params.adaptiveMinSamples = static_cast<uint32_t>(kAdaptiveMinSamples);
 			const uint32_t sampleCount = static_cast<uint32_t>(glm::min(batch, target - _sample));
 			const PathTracerLightingData lighting = webGPULightingData(_state, _envIsHdri);
+			Log::info("WebGPU dispatch: flags=(%u,%u,%u,%u) envColor=(%f,%f,%f) w=%i h=%i",
+				lighting.flags.x, lighting.flags.y, lighting.flags.z, lighting.flags.w,
+				(double)lighting.environmentColor.x, (double)lighting.environmentColor.y, (double)lighting.environmentColor.z,
+				_width, _height);
 			if (_webGPU.renderBatch(_cameraData, params, lighting, sampleCount,
 					static_cast<uint32_t>(_width), static_cast<uint32_t>(_height), _state.exposure,
 					_state.filmic, !_webGPUDenoiseSeeded)) {
@@ -1868,8 +1900,15 @@ void VoxelDDAPathTracer::denoiseColor(float *rgb) {
 						const float da1 = a0[1] - a1[1];
 						const float da2 = a0[2] - a1[2];
 						const float albedoWeight = glm::exp(-(da0 * da0 + da1 * da1 + da2 * da2) * 80.0f);
-						const float ndot = glm::clamp(n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2], 0.0f, 1.0f);
-						const float normalWeight = glm::pow(ndot, 32.0f);
+						const float nlen0 = n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2];
+						const float nlen1 = n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2];
+						float normalWeight = 1.0f;
+						if (nlen0 > 1.0e-12f && nlen1 > 1.0e-12f) {
+							const float ndot = glm::clamp(n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2], 0.0f, 1.0f);
+							normalWeight = glm::pow(ndot, 32.0f);
+						} else if (nlen0 > 1.0e-12f || nlen1 > 1.0e-12f) {
+							normalWeight = 0.0f;
+						}
 						const float depthScale = 0.03f * glm::max(depth[i], depth[j]) + 0.01f;
 						const float depthDelta = glm::abs(depth[i] - depth[j]) / depthScale;
 						const float depthWeight = glm::exp(-depthDelta * depthDelta);
