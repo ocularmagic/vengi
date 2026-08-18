@@ -1202,8 +1202,8 @@ void Palette::setAttenuation(uint8_t paletteColorIdx, float factor) {
 	setMaterialValue(paletteColorIdx, MaterialAttenuation, factor);
 }
 
-void Palette::setFlux(uint8_t paletteColorIdx, float factor) {
-	setMaterialValue(paletteColorIdx, MaterialFlux, factor);
+void Palette::setEmitBoost(uint8_t paletteColorIdx, float factor) {
+	setMaterialValue(paletteColorIdx, MaterialEmitBoost, factor);
 }
 
 void Palette::setAlpha(uint8_t paletteColorIdx, float factor) {
@@ -1222,15 +1222,15 @@ void Palette::setSp(uint8_t paletteColorIdx, float factor) {
 	setMaterialValue(paletteColorIdx, MaterialSp, factor);
 }
 
-void Palette::setPhase(uint8_t paletteColorIdx, float factor) {
+void Palette::setRimLight(uint8_t paletteColorIdx, float factor) {
 	if (factor < 0.0f || factor > 1.0f) {
 		Log::warn("Unexpected glossiness factor %f for palette color %i", factor, paletteColorIdx);
 	}
-	setMaterialValue(paletteColorIdx, MaterialPhase, glm::clamp(factor, 0.0f, 1.0f));
+	setMaterialValue(paletteColorIdx, MaterialRimLight, glm::clamp(factor, 0.0f, 1.0f));
 }
 
-void Palette::setMedia(uint8_t paletteColorIdx, float factor) {
-	setMaterialValue(paletteColorIdx, MaterialMedia, factor);
+void Palette::setScatter(uint8_t paletteColorIdx, float factor) {
+	setMaterialValue(paletteColorIdx, MaterialScatter, factor);
 }
 
 void Palette::setLowDynamicRange(uint8_t paletteColorIdx, float factor) {

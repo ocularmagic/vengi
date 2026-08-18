@@ -15,13 +15,13 @@ The following material names are imported from magicavoxel and a few of them are
 | `specular`            | KHR_materials_specular (fallback: KHR_materials_pbrSpecularGlossiness) |
 | `indexOfRefraction`   | KHR_materials_ior                                          |
 | `attenuation`         | KHR_materials_volume.attenuationDistance (= 1 / attenuation) |
-| `flux`                |                                                            |
+| `emitBoost`           |                                                            |
 | `emit`                | emissiveFactor                                             |
 | `lowDynamicRange`     |                                                            |
 | `density`             |                                                            |
 | `sp`                  |                                                            |
-| `phase`               |                                                            |
-| `media`               |                                                            |
+| `rimLight`            |                                                            |
+| `scatter`             |                                                            |
 
 MagicaVoxel `MaterialType` (Diffuse / Metal / Glass / Emit / Blend / Media) has no stock glTF equivalent and is not reconstructed on import.
 

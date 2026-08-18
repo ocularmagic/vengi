@@ -87,12 +87,12 @@ public:
 	void setSpecular(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setIndexOfRefraction(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setAttenuation(uint8_t paletteColorIdx, float factor = 1.0f);
-	void setFlux(uint8_t paletteColorIdx, float factor = 1.0f);
+	void setEmitBoost(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setAlpha(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setDensity(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setSp(uint8_t paletteColorIdx, float factor = 1.0f);
-	void setPhase(uint8_t paletteColorIdx, float factor = 1.0f);
-	void setMedia(uint8_t paletteColorIdx, float factor = 1.0f);
+	void setRimLight(uint8_t paletteColorIdx, float factor = 1.0f);
+	void setScatter(uint8_t paletteColorIdx, float factor = 1.0f);
 	void setLowDynamicRange(uint8_t paletteColorIdx, float factor = 1.0f);
 	// returns true if the palette has any materials set
 	bool hasMaterials() const;

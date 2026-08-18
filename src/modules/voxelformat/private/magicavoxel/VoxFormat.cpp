@@ -674,7 +674,7 @@ bool VoxFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core:
 			mat.matl[i].type = ogt_matl_type_emit;
 		} else if (type == palette::MaterialType::Blend) {
 			mat.matl[i].type = ogt_matl_type_blend;
-		} else if (type == palette::MaterialType::Media) {
+		} else if (type == palette::MaterialType::Volumetric) {
 			mat.matl[i].type = ogt_matl_type_media;
 		} else {
 			Log::error("Unknown material type %i", (int)type);
@@ -701,9 +701,9 @@ bool VoxFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core:
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_att;
 			mat.matl[i].att = material.value(palette::MaterialAttenuation);
 		}
-		if (material.has(palette::MaterialProperty::MaterialFlux)) {
+		if (material.has(palette::MaterialProperty::MaterialEmitBoost)) {
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_flux;
-			mat.matl[i].flux = material.value(palette::MaterialFlux);
+			mat.matl[i].flux = material.value(palette::MaterialEmitBoost);
 		}
 		if (material.has(palette::MaterialProperty::MaterialEmit)) {
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_emit;
@@ -726,13 +726,13 @@ bool VoxFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core:
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_sp;
 			mat.matl[i].sp = material.value(palette::MaterialSp);
 		}
-		if (material.has(palette::MaterialProperty::MaterialPhase)) {
+		if (material.has(palette::MaterialProperty::MaterialRimLight)) {
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_g;
-			mat.matl[i].g = material.value(palette::MaterialPhase);
+			mat.matl[i].g = material.value(palette::MaterialRimLight);
 		}
-		if (material.has(palette::MaterialProperty::MaterialMedia)) {
+		if (material.has(palette::MaterialProperty::MaterialScatter)) {
 			mat.matl[i].content_flags |= k_ogt_vox_matl_have_media;
-			mat.matl[i].media = material.value(palette::MaterialMedia);
+			mat.matl[i].media = material.value(palette::MaterialScatter);
 		}
 	}
 

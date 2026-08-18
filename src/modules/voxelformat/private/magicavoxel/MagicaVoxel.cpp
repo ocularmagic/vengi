@@ -336,7 +336,7 @@ void loadPaletteFromScene(const ogt_vox_scene *scene, palette::Palette &palette)
 		} else if (matl.type == ogt_matl_type_blend) {
 			palette.setMaterialType(palIdx, palette::MaterialType::Blend);
 		} else if (matl.type == ogt_matl_type_media) {
-			palette.setMaterialType(palIdx, palette::MaterialType::Media);
+			palette.setMaterialType(palIdx, palette::MaterialType::Volumetric);
 		}
 		if (matl.content_flags & k_ogt_vox_matl_have_metal) {
 			palette.setMetal(palIdx, matl.metal);
@@ -357,7 +357,7 @@ void loadPaletteFromScene(const ogt_vox_scene *scene, palette::Palette &palette)
 			palette.setAttenuation(palIdx, matl.att);
 		}
 		if (matl.content_flags & k_ogt_vox_matl_have_flux) {
-			palette.setFlux(palIdx, matl.flux);
+			palette.setEmitBoost(palIdx, matl.flux);
 		}
 		if (matl.content_flags & k_ogt_vox_matl_have_emit) {
 			palette.setEmit(palIdx, matl.emit);
@@ -377,10 +377,10 @@ void loadPaletteFromScene(const ogt_vox_scene *scene, palette::Palette &palette)
 			palette.setSp(palIdx, matl.sp);
 		}
 		if (matl.content_flags & k_ogt_vox_matl_have_g) {
-			palette.setPhase(palIdx, matl.g);
+			palette.setRimLight(palIdx, matl.g);
 		}
 		if (matl.content_flags & k_ogt_vox_matl_have_media) {
-			palette.setMedia(palIdx, matl.media);
+			palette.setScatter(palIdx, matl.media);
 		}
 		++palIdx;
 	}

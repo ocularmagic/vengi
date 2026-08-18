@@ -65,7 +65,7 @@ bool AVMTPalette::save(const palette::ColorPalette &palette, const core::String 
 		if (mat.type == palette::MaterialType::Glass || mat.type == palette::MaterialType::Blend) {
 			// TODO: MATERIAL: not really the alpha value...
 			stream.writeStringFormat(false, "\t\t\t\t\t\tsurfaceTransmission =\t%0.9f\n", c.a);
-		} else if (mat.type == palette::MaterialType::Media) {
+		} else if (mat.type == palette::MaterialType::Volumetric) {
 			stream.writeString("\t\t\t\t\t\tsurfaceTransmission =\t1.0\n", false);
 		} else {
 			stream.writeString("\t\t\t\t\t\tsurfaceTransmission =\t0.0\n", false);
@@ -73,8 +73,8 @@ bool AVMTPalette::save(const palette::ColorPalette &palette, const core::String 
 		// stream.writeStringFormat(false, "\t\t\t\t\t\tabsorptionLength =\t%f\n", mat.absorptionLength);
 		// stream.writeStringFormat(false, "\t\t\t\t\t\tscatterLength =\t%f\n", mat.scatterLength);
 		stream.writeStringFormat(false, "\t\t\t\t\t\tindexOfRefraction =\t%0.9f\n", 1.0f + mat.indexOfRefraction);
-		if (mat.media == 1.0f) {
-			stream.writeStringFormat(false, "\t\t\t\t\t\tphase =\t%0.9f\n", mat.phase);
+		if (mat.scatter == 1.0f) {
+			stream.writeStringFormat(false, "						phase =	%0.9f\n", mat.rimLight);
 		} else {
 			stream.writeString("\t\t\t\t\t\tphase =\t0.0\n", false);
 		}

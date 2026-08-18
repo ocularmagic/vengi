@@ -1734,9 +1734,9 @@ TEST_F(PathTracerTest, testVoxelDDAMediaIsSeeThrough) {
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(255, 0, 0, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.35f);
-	pal.setMedia(1, 0.85f);
+	pal.setScatter(1, 0.85f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));
@@ -1772,9 +1772,9 @@ static int mediaEmitLuma(float emit) {
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(255, 80, 20, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.5f);
-	pal.setMedia(1, 0.15f);
+	pal.setScatter(1, 0.15f);
 	if (emit > 0.0f) {
 		pal.setEmit(1, emit);
 	}
@@ -1823,9 +1823,9 @@ TEST_F(PathTracerTest, testVoxelDDAMediaEmitIsSoft) {
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(255, 0, 0, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.08f);
-	pal.setMedia(1, 0.0f);
+	pal.setScatter(1, 0.0f);
 	pal.setEmit(1, 0.18f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
@@ -1865,9 +1865,9 @@ static int mediaLampGroundLuma(bool volumetric, float emit) {
 	pal.nippon();
 	pal.setColor(2, color::RGBA(255, 0, 0, 255));
 	if (volumetric) {
-		pal.setMaterialType(2, palette::MaterialType::Media);
+		pal.setMaterialType(2, palette::MaterialType::Volumetric);
 		pal.setDensity(2, 0.5f);
-		pal.setMedia(2, 0.15f);
+		pal.setScatter(2, 0.15f);
 	}
 	if (emit > 0.0f) {
 		pal.setEmit(2, emit);
@@ -1924,10 +1924,10 @@ static int mediaFloaterGroundLuma(const core::String &hdriPath, bool floater, fl
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(2, color::RGBA(220, 220, 220, 255));
-	pal.setMaterialType(2, palette::MaterialType::Media);
+	pal.setMaterialType(2, palette::MaterialType::Volumetric);
 	pal.setDensity(2, density);
-	pal.setPhase(2, phase);
-	pal.setMedia(2, 0.9f);
+	pal.setRimLight(2, phase);
+	pal.setScatter(2, 0.9f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));
@@ -1983,10 +1983,10 @@ static int mediaCloudLuma(const core::String &hdriPath, float phase, float expos
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(230, 230, 230, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.55f);
-	pal.setPhase(1, phase);
-	pal.setMedia(1, 1.0f);
+	pal.setRimLight(1, phase);
+	pal.setScatter(1, 1.0f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));
@@ -2055,10 +2055,10 @@ static color::RGBA studioMediaColor(float density, float scatter, float phase, f
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(220, 80, 40, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, density);
-	pal.setMedia(1, scatter);
-	pal.setPhase(1, phase);
+	pal.setScatter(1, scatter);
+	pal.setRimLight(1, phase);
 	if (emit > 0.0f) {
 		pal.setEmit(1, emit);
 	}
@@ -2125,10 +2125,10 @@ static int hdriMediaRed(const core::String &hdriPath, float scatter, float phase
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(255, 0, 0, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.25f);
-	pal.setMedia(1, scatter);
-	pal.setPhase(1, phase);
+	pal.setScatter(1, scatter);
+	pal.setRimLight(1, phase);
 	pal.setEmit(1, 0.30f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
@@ -2194,9 +2194,9 @@ TEST_F(PathTracerTest, testVoxelDDAMediaNeighborsMatch) {
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(210, 200, 180, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.4f);
-	pal.setMedia(1, 0.9f);
+	pal.setScatter(1, 0.9f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));
@@ -2239,9 +2239,9 @@ TEST_F(PathTracerTest, testVoxelDDAMediaSlabHasNoGridWalls) {
 	palette::Palette pal;
 	pal.nippon();
 	pal.setColor(1, color::RGBA(211, 211, 211, 255));
-	pal.setMaterialType(1, palette::MaterialType::Media);
+	pal.setMaterialType(1, palette::MaterialType::Volumetric);
 	pal.setDensity(1, 0.18f);
-	pal.setMedia(1, 1.0f);
+	pal.setScatter(1, 1.0f);
 	modelNode.setPalette(pal);
 	modelNode.setVolume(v);
 	sceneGraph.emplace(core::move(modelNode));

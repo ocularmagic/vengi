@@ -597,7 +597,7 @@ bool AniVoxelFormat::readMaterial(io::SeekableReadStream &stream, palette::Palet
 				} else if (propValue == "_blend") {
 					palette.setMaterialType(palIdx, palette::MaterialType::Blend);
 				} else if (propValue == "_media") {
-					palette.setMaterialType(palIdx, palette::MaterialType::Media);
+					palette.setMaterialType(palIdx, palette::MaterialType::Volumetric);
 				} else {
 					Log::debug("VOXA: Unknown material type: %s", propValue.c_str());
 				}

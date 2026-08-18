@@ -369,13 +369,13 @@ void VoxelDDAPathTracer::buildGrids(const scenegraph::SceneGraph &sceneGraph) {
 				// emit is 0..1 in the UI. Solids use a steep curve so the
 				// same slider covers a night-light through a strong lamp.
 				// Volumes use a gentler curve: modest emit is a soft flame,
-				// not a clipped neon cube. flux is Magica leftover.
-				float fluxMul = 1.0f;
-				if (mat.has(palette::MaterialProperty::MaterialFlux)) {
-					fluxMul = glm::exp2(mat.value(palette::MaterialProperty::MaterialFlux) * 5.0f);
+				// not a clipped neon cube.
+				float emitBoostMul = 1.0f;
+				if (mat.has(palette::MaterialProperty::MaterialEmitBoost)) {
+					emitBoostMul = glm::exp2(mat.value(palette::MaterialProperty::MaterialEmitBoost) * 5.0f);
 				}
-				surfaceEmission = glm::vec3(c) * (glm::exp2(emit * 9.0f) - 1.0f) * fluxMul;
-				volumeEmission = glm::vec3(c) * (glm::exp2(emit * 3.0f) - 1.0f) * fluxMul;
+				surfaceEmission = glm::vec3(c) * (glm::exp2(emit * 9.0f) - 1.0f) * emitBoostMul;
+				volumeEmission = glm::vec3(c) * (glm::exp2(emit * 3.0f) - 1.0f) * emitBoostMul;
 			}
 			const float opacity = glm::clamp(c.a, 0.0f, 1.0f);
 			const float attenuation = mat.has(palette::MaterialProperty::MaterialAttenuation)
@@ -403,20 +403,20 @@ void VoxelDDAPathTracer::buildGrids(const scenegraph::SceneGraph &sceneGraph) {
 			float density = mat.has(palette::MaterialProperty::MaterialDensity)
 								? mat.value(palette::MaterialProperty::MaterialDensity)
 								: 0.0f;
-			if (mat.type == palette::MaterialType::Media && density <= 0.0f) {
+			if (mat.type == palette::MaterialType::Volumetric && density <= 0.0f) {
 				density = 0.45f;
 			}
 			density = glm::clamp(density, 0.0f, 1.0f);
-			const float phase = mat.has(palette::MaterialProperty::MaterialPhase)
-								? glm::clamp(mat.value(palette::MaterialProperty::MaterialPhase), 0.0f, 1.0f)
+			const float rimLight = mat.has(palette::MaterialProperty::MaterialRimLight)
+								? glm::clamp(mat.value(palette::MaterialProperty::MaterialRimLight), 0.0f, 1.0f)
 								: 0.0f;
-			const float media = mat.has(palette::MaterialProperty::MaterialMedia)
-								? glm::clamp(mat.value(palette::MaterialProperty::MaterialMedia), 0.0f, 1.0f)
-								: (mat.type == palette::MaterialType::Media ? 0.85f : 0.0f);
+			const float scatter = mat.has(palette::MaterialProperty::MaterialScatter)
+								? glm::clamp(mat.value(palette::MaterialProperty::MaterialScatter), 0.0f, 1.0f)
+								: (mat.type == palette::MaterialType::Volumetric ? 0.85f : 0.0f);
 			// Default IOR is 1.3 on every slot -- that is not "this is glass".
 			// See-through only if the swatch has alpha or Magica marked Glass/Blend.
 			uint32_t surfaceType = kSurfOpaque;
-			if (mat.type == palette::MaterialType::Media || density > 1.0e-3f) {
+			if (mat.type == palette::MaterialType::Volumetric || density > 1.0e-3f) {
 				surfaceType = kSurfMedia;
 			} else if (mat.type == palette::MaterialType::Glass || (opacity < 1.0f && ior > 1.01f)) {
 				surfaceType = kSurfGlass;
@@ -430,7 +430,7 @@ void VoxelDDAPathTracer::buildGrids(const scenegraph::SceneGraph &sceneGraph) {
 			material.emissionIor = glm::vec4(surfaceEmission, ior);
 			material.volumeEmissionAttenuation = glm::vec4(volumeEmission, attenuation);
 			material.surface = glm::vec4(metal, roughness, specular, density);
-			material.volume = glm::vec4(phase, media, 0.0f, 0.0f);
+			material.volume = glm::vec4(rimLight, scatter, 0.0f, 0.0f);
 			material.flags = glm::uvec4(surfaceType, 0u, 0u, 0u);
 			if (surfaceType == kSurfMedia) {
 				_hasMedia = true;
