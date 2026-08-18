@@ -211,6 +211,7 @@ set(TEST_SRCS
 	tests/KV6FormatTest.cpp
 	tests/MapFormatTest.cpp
 	tests/MeshFormatTest.cpp
+	tests/MaterialTestSceneGenerator.cpp
 	tests/MCRFormatTest.cpp
 	tests/MD2FormatTest.cpp
 	tests/MD3FormatTest.cpp
