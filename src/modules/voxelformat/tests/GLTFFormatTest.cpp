@@ -173,11 +173,11 @@ TEST_F(GLTFFormatTest, testMaterial) {
 	// Stock glTF has no MagicaVoxel MaterialType, flux, density, media, phase, sp, or ldr.
 	core::Buffer<palette::MaterialProperty> ignoredMaterials;
 	ignoredMaterials.push_back(palette::MaterialProperty::MaterialLowDynamicRange);
-	ignoredMaterials.push_back(palette::MaterialProperty::MaterialFlux);
+	ignoredMaterials.push_back(palette::MaterialProperty::MaterialEmitBoost);
 	ignoredMaterials.push_back(palette::MaterialProperty::MaterialSp);
-	ignoredMaterials.push_back(palette::MaterialProperty::MaterialMedia);
+	ignoredMaterials.push_back(palette::MaterialProperty::MaterialScatter);
 	ignoredMaterials.push_back(palette::MaterialProperty::MaterialDensity);
-	ignoredMaterials.push_back(palette::MaterialProperty::MaterialPhase);
+	ignoredMaterials.push_back(palette::MaterialProperty::MaterialRimLight);
 	testMaterial(sceneGraph, "test_material.gltf", ignoredMaterials, true);
 }
 

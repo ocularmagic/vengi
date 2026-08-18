@@ -458,8 +458,16 @@ bool VENGIFormat::loadNodePaletteColors(scenegraph::SceneGraph &sceneGraph, scen
 			wrapBool(stream.readPascalStringUInt16LE(name))
 			float value;
 			wrap(stream.readFloat(value))
-			if (name == "glossiness") {
-				name = MaterialPropertyName(palette::MaterialProperty::MaterialPhase);
+			// Migrate historical property names to the current vocabulary.
+			// The old Media/phase/media/flux names were renamed to
+			// Volumetric/rimLight/scatter/emitBoost (glossiness predates
+			// even "phase").
+			if (name == "glossiness" || name == "phase") {
+				name = MaterialPropertyName(palette::MaterialProperty::MaterialRimLight);
+			} else if (name == "media") {
+				name = MaterialPropertyName(palette::MaterialProperty::MaterialScatter);
+			} else if (name == "flux") {
+				name = MaterialPropertyName(palette::MaterialProperty::MaterialEmitBoost);
 			}
 			palette.setMaterialProperty(i, name, value);
 		}

@@ -42,8 +42,8 @@ bool parseMaterials(io::SeekableReadStream &stream, core::DynamicArray<AVMTMater
 			} else if (token == "surfaceTransmission") {
 				const float alpha = avmtStream.nextStringValue().toFloat();
 				if (alpha >= 1.0f) {
-					currentMaterial.mat.type = palette::MaterialType::Media;
-					currentMaterial.mat.setValue(MaterialProperty::MaterialMedia, 1.0f);
+					currentMaterial.mat.type = palette::MaterialType::Volumetric;
+					currentMaterial.mat.setValue(MaterialProperty::MaterialScatter, 1.0f);
 				} else if (alpha > 0.0f) {
 					currentMaterial.mat.type = palette::MaterialType::Blend;
 					// currentMaterial.color.a = alpha; // TODO: MATERIAL: not really the alpha value...
@@ -57,7 +57,7 @@ bool parseMaterials(io::SeekableReadStream &stream, core::DynamicArray<AVMTMater
 			} else if (token == "phase") {
 				const float v = avmtStream.nextStringValue().toFloat();
 				if (v > 0.0f) {
-					currentMaterial.mat.setValue(MaterialProperty::MaterialPhase, v);
+					currentMaterial.mat.setValue(MaterialProperty::MaterialRimLight, v);
 				}
 			} else if (token == "smooth") {
 				const float v = avmtStream.nextStringValue().toFloat();

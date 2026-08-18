@@ -65,7 +65,7 @@ void PalettePanel::handleContextMenu(uint8_t paletteColorIdx, scenegraph::SceneG
 		const bool isCurrentInSelection = _selectedIndices.has(paletteColorIdx);
 		if (usableColor) {
 			const palette::Material &mat = palette.material(paletteColorIdx);
-			const bool volumetric = mat.type == palette::MaterialType::Media ||
+			const bool volumetric = mat.type == palette::MaterialType::Volumetric ||
 									(mat.has(palette::MaterialProperty::MaterialDensity) &&
 									 mat.value(palette::MaterialProperty::MaterialDensity) > 1.0e-3f);
 
@@ -111,7 +111,7 @@ void PalettePanel::handleContextMenu(uint8_t paletteColorIdx, scenegraph::SceneG
 			const float emitNow = palette.material(paletteColorIdx).value(palette::MaterialProperty::MaterialEmit);
 			ImGui::BeginDisabled(emitNow <= 1.0e-4f);
 			ImGui::Indent();
-			slider(palette::MaterialProperty::MaterialFlux, _("Boost emit"),
+			slider(palette::MaterialProperty::MaterialEmitBoost, _("Boost emit"),
 				   _("Extra punch on emit. MagicaVoxel flux. Does nothing when emit is 0."));
 			ImGui::Unindent();
 			ImGui::EndDisabled();
@@ -121,13 +121,13 @@ void PalettePanel::handleContextMenu(uint8_t paletteColorIdx, scenegraph::SceneG
 			if (ImGui::Checkbox(_("Volumetric"), &volumetricEdit)) {
 				applyToIndices([&](uint8_t idx) {
 					if (volumetricEdit) {
-						palette.setMaterialType(idx, palette::MaterialType::Media);
+						palette.setMaterialType(idx, palette::MaterialType::Volumetric);
 						if (!palette.material(idx).has(palette::MaterialProperty::MaterialDensity) ||
 							palette.material(idx).value(palette::MaterialProperty::MaterialDensity) <= 1.0e-3f) {
 							palette.setMaterialValue(idx, palette::MaterialProperty::MaterialDensity, 0.45f);
 						}
-						if (!palette.material(idx).has(palette::MaterialProperty::MaterialMedia)) {
-							palette.setMaterialValue(idx, palette::MaterialProperty::MaterialMedia, 0.85f);
+						if (!palette.material(idx).has(palette::MaterialProperty::MaterialScatter)) {
+							palette.setMaterialValue(idx, palette::MaterialProperty::MaterialScatter, 0.85f);
 						}
 					} else {
 						palette.setMaterialType(idx, palette::MaterialType::Diffuse);
@@ -144,9 +144,9 @@ void PalettePanel::handleContextMenu(uint8_t paletteColorIdx, scenegraph::SceneG
 			ImGui::Indent();
 			slider(palette::MaterialProperty::MaterialDensity, _("Density"),
 				   _("How much stuff is in the air. 0 is haze, 0.5 is still see-through, 1 is thick smoke."));
-			slider(palette::MaterialProperty::MaterialMedia, _("Scatter"),
+			slider(palette::MaterialProperty::MaterialScatter, _("Scatter"),
 				   _("0 is smoke: you see through to what is behind. 1 is a lit cloud of this color. Independent of emit."));
-			slider(palette::MaterialProperty::MaterialPhase, _("Rim light"),
+			slider(palette::MaterialProperty::MaterialRimLight, _("Rim light"),
 				   _("Needs Scatter above 0. 0 is even. 1 is a hot edge toward the light."));
 			ImGui::Unindent();
 			ImGui::EndDisabled();

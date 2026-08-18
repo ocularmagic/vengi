@@ -533,9 +533,9 @@ bool TeardownFormat::loadGroups(const core::String &filename, const io::ArchiveP
 					flux = 1;
 				float emission = emissive / glm::pow(10.0f, (float)(flux - 1));
 				material.emit = glm::clamp(emission, 0.0f, 1.0f);
-				material.flux = (float)flux;
+				material.emitBoost = (float)flux;
 				material.setValue(palette::MaterialProperty::MaterialEmit, material.emit);
-				material.setValue(palette::MaterialProperty::MaterialFlux, material.flux);
+				material.setValue(palette::MaterialProperty::MaterialEmitBoost, material.emitBoost);
 			} else if (reflectivity > 0.0f || shinyness > 0.0f || metalness > 0.0f) {
 				// Metal material
 				material.type = palette::MaterialType::Metal;

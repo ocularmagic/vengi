@@ -48,7 +48,7 @@ void Material::setValue(MaterialProperty n, float value) {
 	Log::trace("Material: Set %s to %f", MaterialPropertyNames[n - 1], value);
 	// Scatter and rim are meaningful at 0. Clearing the mask made
 	// type Media fall back to scatter 0.85, so the slider did nothing.
-	if (value > 0.0f || n == MaterialProperty::MaterialMedia || n == MaterialProperty::MaterialPhase) {
+	if (value > 0.0f || n == MaterialProperty::MaterialScatter || n == MaterialProperty::MaterialRimLight) {
 		mask |= (1 << n);
 	} else {
 		mask &= ~(1 << n);

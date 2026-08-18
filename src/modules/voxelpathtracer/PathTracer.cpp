@@ -346,7 +346,7 @@ static yocto::material_type mapMaterialType(palette::MaterialType type) {
 		return yocto::material_type::refractive;
 	case palette::MaterialType::Blend:
 		return yocto::material_type::transparent;
-	case palette::MaterialType::Media:
+	case palette::MaterialType::Volumetric:
 		return yocto::material_type::volumetric;
 	}
 	return yocto::material_type::matte;
@@ -372,14 +372,14 @@ static void setupMaterial(yocto::scene_data &scene, const palette::Palette &pale
 	if (ownMaterial.has(palette::MaterialProperty::MaterialIndexOfRefraction)) {
 		material.ior = ownMaterial.value(palette::MaterialProperty::MaterialIndexOfRefraction);
 	}
-	if (ownMaterial.has(palette::MaterialProperty::MaterialPhase)) {
-		material.scanisotropy = ownMaterial.value(palette::MaterialProperty::MaterialPhase);
+	if (ownMaterial.has(palette::MaterialProperty::MaterialRimLight)) {
+		material.scanisotropy = ownMaterial.value(palette::MaterialProperty::MaterialRimLight);
 	}
 	if (ownMaterial.has(palette::MaterialProperty::MaterialDensity)) {
 		material.trdepth = ownMaterial.value(palette::MaterialProperty::MaterialDensity);
 	}
-	if (ownMaterial.has(palette::MaterialProperty::MaterialMedia)) {
-		material.scattering = priv::toVec3f(color) * ownMaterial.value(palette::MaterialProperty::MaterialMedia);
+	if (ownMaterial.has(palette::MaterialProperty::MaterialScatter)) {
+		material.scattering = priv::toVec3f(color) * ownMaterial.value(palette::MaterialProperty::MaterialScatter);
 	}
 	material.opacity = color.a;
 #if PATHTRACER_TEXTURES

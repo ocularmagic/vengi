@@ -398,13 +398,13 @@ TEST_F(PaletteTest, testMaterialProperties) {
 
 	EXPECT_TRUE(pal.hasMaterials());
 
-	pal.setMaterialType(idx, MaterialType::Media);
-	pal.setMedia(idx, 0.0f);
-	EXPECT_TRUE(pal.material(idx).has(MaterialMedia));
-	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialMedia));
-	pal.setPhase(idx, 0.0f);
-	EXPECT_TRUE(pal.material(idx).has(MaterialPhase));
-	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialPhase));
+	pal.setMaterialType(idx, MaterialType::Volumetric);
+	pal.setScatter(idx, 0.0f);
+	EXPECT_TRUE(pal.material(idx).has(MaterialScatter));
+	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialScatter));
+	pal.setRimLight(idx, 0.0f);
+	EXPECT_TRUE(pal.material(idx).has(MaterialRimLight));
+	EXPECT_FLOAT_EQ(0.0f, pal.material(idx).value(MaterialRimLight));
 }
 
 TEST_F(PaletteTest, testColorNames) {
