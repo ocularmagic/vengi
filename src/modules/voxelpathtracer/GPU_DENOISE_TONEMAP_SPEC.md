@@ -1,6 +1,7 @@
 # GPU denoise + tonemap pass — implementation spec
 
-Status: **design (not implemented)**. Owner: `vengi-pathtracer` skill.
+Status: **implemented** (steps 1-4, commits `2cef7c0`, `90ab287`, `be760ac`,
+`a04e042`). Owner: `vengi-pathtracer` skill.
 Follows renderer roadmap items 3 (adaptive) and 5 (SVGF denoiser), both already
 committed. This pass is the deferred **performance** optimization called out at
 the end of roadmap item 5: it is *not* a quality or parity change.
@@ -118,7 +119,12 @@ Three compute entry points added to `PathTracerTraversalWGSL.h`, dispatched
 from the JS driver. Buffers stay GPU-resident; nothing is read back except the
 final image and a 4-byte flag.
 
-### 4.1 `denoiseMain` — normalize + à-trous (per pixel)
+> **IMPLEMENTED note:** the three entry points below were consolidated into a
+> single `denoiseMain` entry point with a `mode` field (0 = init, 1 = a-trous
+> step, 2 = tonemap, 3 = temporal), plus a separate `convergenceMain` for the
+> atomic. `denoiseParams.modeStepFilmic` packs `(mode, step, filmic, seed)`.
+
+### 4.1 `denoiseMain` — normalize + à-trous (per pixel) — IMPLEMENTED (modes 0/1)
 
 `@compute @workgroup_size(64)`, one invocation per pixel.
 
@@ -134,7 +140,7 @@ final image and a 4-byte flag.
 - Faithful port of the CPU weight chain, including the feature remove/re-apply
   around the passes.
 
-### 4.2 `temporalMain` — history reprojection + blend (per pixel)
+### 4.2 temporal accumulation (mode 3) — history reprojection + blend — IMPLEMENTED (step 2, `90ab287`)
 
 - Persistent GPU history buffers: `temporalColor` (3×f32/px), `temporalNormal`,
   `temporalAlbedo`, `temporalDepth`, `temporalCount`.
@@ -146,7 +152,7 @@ final image and a 4-byte flag.
 - On first frame / restart, seed history from the spatially-filtered result and
   return it unchanged (mirror the `seed` branch).
 
-### 4.3 `tonemapMain` — final RGBA8 (per pixel)
+### 4.3 tonemap (mode 2) — final RGBA8 (per pixel) — IMPLEMENTED (step 1, `2cef7c0`)
 
 - Reads the denoised color (from `denoiseScratch` final ping buffer, or from
   `temporalColor` after `temporalMain`), applies
@@ -179,7 +185,7 @@ already-12× reduction, and keep CPU-side `allPixelsConverged`.)
 
 ---
 
-## 5. JS driver changes (`PathTracerWebGPU.cpp`, EM_JS block)
+## 5. JS driver changes (`PathTracerWebGPU.cpp`, EM_JS block) — IMPLEMENTED (step 4, `a04e042`)
 
 1. New buffers in the `record` (extend `dropBuffers` to destroy them on
    abort/recover): `denoiseScratch` (ping-pong, `storage, read_write`),
@@ -203,7 +209,7 @@ dispatches — mirror `image()`.
 
 ---
 
-## 6. C++ changes (`VoxelDDAPathTracer.cpp`)
+## 6. C++ changes (`VoxelDDAPathTracer.cpp`) — IMPLEMENTED (step 4, `a04e042`)
 
 - WebGPU `update()` loop: after accumulation completes, call the new denoise
   EM_JS entry point instead of `takePrimaryOutputs` + `pathTracerCopySampleOutputs`.
