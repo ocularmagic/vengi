@@ -82,10 +82,13 @@ void addClump(scenegraph::SceneGraph &sceneGraph, const ClumpSpec &spec, const g
 	const glm::vec3 center((float)(size / 2));
 	const voxel::Region region = vol->region();
 	if (asBox) {
+		// Thin panel: full in X/Z, a thin slice in Y (a light fixture).
 		for (int z = region.getLowerZ(); z <= region.getUpperZ(); ++z) {
 			for (int y = region.getLowerY(); y <= region.getUpperY(); ++y) {
 				for (int x = region.getLowerX(); x <= region.getUpperX(); ++x) {
-					vol->setVoxel(x, y, z, voxel::createVoxel(pal, 1));
+					if (y >= 8 && y <= 11) {
+						vol->setVoxel(x, y, z, voxel::createVoxel(pal, 1));
+					}
 				}
 			}
 		}
@@ -102,9 +105,10 @@ void addClump(scenegraph::SceneGraph &sceneGraph, const ClumpSpec &spec, const g
 	}
 	scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
 	node.setName(spec.name);
-	node.setVolume(vol);
-	node.setPalette(pal);
+	node.setPivot(glm::vec3(0.0f));
 	node.transform(0).setLocalTranslation(position);
+	node.setPalette(pal);
+	node.setVolume(vol);
 	sceneGraph.emplace(core::move(node));
 }
 
@@ -122,7 +126,7 @@ TEST_F(MaterialTestSceneGenerator, generateMaterialTestScene) {
 		{"metal-brushed", color::RGBA(200, 200, 210), palette::MaterialType::Metal, 1.0f, 0.5f, 0.6f},
 		{"glass-clear", color::RGBA(255, 255, 255), palette::MaterialType::Glass, -1.0f, -1.0f, -1.0f, 1.5f},
 		{"glass-tinted", color::RGBA(120, 200, 210), palette::MaterialType::Glass, -1.0f, -1.0f, -1.0f, 1.5f, 0.4f},
-		{"emit", color::RGBA(255, 240, 200), palette::MaterialType::Emit, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f},
+		{"emit", color::RGBA(255, 240, 200), palette::MaterialType::Emit, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.4f, -1.0f},
 		{"alpha", color::RGBA(100, 150, 255, 128), palette::MaterialType::Blend},
 		{"volumetric-fog", color::RGBA(230, 235, 240), palette::MaterialType::Volumetric, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.1f, 0.8f, 0.0f},
 		{"volumetric-cloud", color::RGBA(250, 250, 255), palette::MaterialType::Volumetric, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.3f, 1.0f, 0.3f},
@@ -155,11 +159,15 @@ TEST_F(MaterialTestSceneGenerator, generateMaterialTestScene) {
 		}
 		scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
 		node.setName(ground.name);
-		node.setVolume(vol);
-		node.setPalette(pal);
+		node.setPivot(glm::vec3(0.0f));
 		node.transform(0).setLocalTranslation(glm::vec3(0.0f));
+		node.setPalette(pal);
+		node.setVolume(vol);
 		sceneGraph.emplace(core::move(node));
 	}
+
+	// Propagate the local translations into world transforms before saving.
+	sceneGraph.updateTransforms();
 
 	// Root HDRI environment: a garage HDRI provides the ambient light and the
 	// reflections the metal/glass clumps need. The basename is resolved next to

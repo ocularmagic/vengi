@@ -596,6 +596,43 @@ TEST_F(PathTracerTest, testHMec) {
 	ASSERT_TRUE(pathTracer.stop());
 }
 
+TEST_F(PathTracerTest, testRenderMaterialScene) {
+	const io::ArchivePtr &archive = io::openFilesystemArchive(_testApp->filesystem());
+	io::FileDescription fileDesc;
+	fileDesc.set("material-test.vengi");
+	scenegraph::SceneGraph sceneGraph;
+	voxelformat::LoadContext testLoadCtx;
+	if (!voxelformat::loadFormat(fileDesc, archive, sceneGraph, testLoadCtx)) {
+		GTEST_SKIP() << "material-test.vengi not present - generate it via MaterialTestSceneGenerator";
+		return;
+	}
+
+	video::Camera cam;
+	cam.setSize(glm::ivec2(800, 600));
+	cam.setRotationType(video::CameraRotationType::Target);
+	cam.setWorldPosition(glm::vec3(0.0f, 85.0f, 135.0f));
+	cam.setTarget(glm::vec3(0.0f, 0.0f, 12.0f));
+	cam.lookAt(glm::vec3(0.0f, 0.0f, 12.0f));
+	cam.setFieldOfView(55.0f);
+	cam.update(0.0);
+
+	voxelpathtracer::PathTracer pathTracer;
+	pathTracer.state().params.resolution = 1024;
+	pathTracer.state().params.samples = 128;
+	ASSERT_TRUE(pathTracer.start(sceneGraph, &cam));
+	EXPECT_TRUE(pathTracer.state().hdriEnvironment);
+	EXPECT_FALSE(pathTracer.state().hdriPath.empty());
+	while (!pathTracer.update()) {
+		_testApp->wait(100);
+	}
+	const image::ImagePtr &img = pathTracer.image();
+	ASSERT_TRUE(img && img->isLoaded());
+	const io::FilePtr &file = _testApp->filesystem()->open("material-test-render.png", io::FileMode::SysWrite);
+	io::FileStream stream(file);
+	ASSERT_TRUE(image::writePNG(img, stream));
+	ASSERT_TRUE(pathTracer.stop());
+}
+
 TEST_F(PathTracerTest, testViewportCameraIsPrimary) {
 	scenegraph::SceneGraph sceneGraph;
 	video::Camera cam;
