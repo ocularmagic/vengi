@@ -65,6 +65,17 @@ private:
 	core::Buffer<float> _accumLuma2;
 	core::Buffer<float> _accumFeature;
 	core::Buffer<int> _accumCount;
+	// SVGF temporal denoiser history. Persists across image() calls within a
+	// render so successive frames accumulate a lower-variance estimate; reset in
+	// start()/restart(). Reprojection uses _temporalCamera to derive per-pixel
+	// motion vectors (identity while the camera is fixed during accumulation).
+	core::Buffer<float> _temporalColor;
+	core::Buffer<float> _temporalNormal;
+	core::Buffer<float> _temporalAlbedo;
+	core::Buffer<float> _temporalDepth;
+	core::Buffer<float> _temporalCount;
+	PathTracerCameraData _temporalCamera;
+	bool _temporalValid = false;
 	int _width = 0;
 	int _height = 0;
 	int _sample = 0;
@@ -116,7 +127,12 @@ private:
 						uint32_t pixelScramble, glm::vec3 &guideAlbedo, glm::vec3 &guideNormal, float &guideDepth,
 						float &guideFeature) const;
 	void accumulateSample();
-	void denoiseColor(float *rgb) const;
+	void denoiseColor(float *rgb);
+	// SVGF temporal accumulation + motion-vector reprojection. Blends the
+	// spatially-filtered frame with the reprojected history, rejecting stale
+	// history at normal/depth/albedo discontinuities. Updates _temporal* state.
+	void denoiseTemporal(float *rgb, const float *normal, const float *albedo, const float *depth,
+						 const float *alpha);
 	// Adaptive sampling: true once the relative standard error of this pixel's
 	// accumulated luminance mean is below the adaptiveError tolerance. Uses
 	// _accumCount/_accum/_accumLuma2; mirrors the WGSL convergence predicate.

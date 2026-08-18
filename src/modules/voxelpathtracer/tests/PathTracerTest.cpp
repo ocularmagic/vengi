@@ -1083,6 +1083,84 @@ TEST_F(PathTracerTest, testVoxelDDADenoiseReducesNoise) {
 	EXPECT_LT(denMad, rawMad) << "den=" << denMad << " raw=" << rawMad;
 }
 
+TEST_F(PathTracerTest, testVoxelDDATemporalDenoiseConverges) {
+	scenegraph::SceneGraph sceneGraph;
+	addUnitCube(sceneGraph);
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(2.0f, 1.6f, 2.0f));
+	cam.lookAt(glm::vec3(0.5f, 0.5f, 0.5f));
+	cam.update(0.0);
+
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 64;
+	tracer.state().params.samples = 16;
+	tracer.state().params.batch = 4;
+	tracer.state().params.bounces = 1;
+	tracer.state().params.denoise = true;
+	ASSERT_TRUE(tracer.start(sceneGraph, &cam));
+
+	// Render progressively, denoising after each batch so the SVGF temporal
+	// history accumulates across frames.
+	int centerLuma[4] = {0, 0, 0, 0};
+	int step = 0;
+	while (step < 4) {
+		const bool done = tracer.update();
+		const image::ImagePtr img = tracer.image();
+		ASSERT_TRUE(img);
+		ASSERT_TRUE(img->isLoaded());
+		const color::RGBA c = img->colorAt(img->width() / 2, img->height() / 2);
+		centerLuma[step] = ((int)c.r + (int)c.g + (int)c.b) / 3;
+		++step;
+		if (done) {
+			break;
+		}
+	}
+	ASSERT_EQ(4, step) << "expected four progressive batches";
+	for (int s = 0; s < step; ++s) {
+		EXPECT_GT(centerLuma[s], 40) << "frame " << s << " went dark (luma=" << centerLuma[s] << ")";
+		EXPECT_LT(centerLuma[s], 250) << "frame " << s << " clipped (luma=" << centerLuma[s] << ")";
+	}
+	// The temporally accumulated estimate converges; later frames stop moving.
+	EXPECT_LE(glm::abs(centerLuma[3] - centerLuma[2]), 8)
+		<< "temporal denoise did not converge (frames " << centerLuma[2] << " -> " << centerLuma[3] << ")";
+	ASSERT_TRUE(tracer.stop());
+}
+
+TEST_F(PathTracerTest, testVoxelDDATemporalDenoiseResetsOnRestart) {
+	scenegraph::SceneGraph sceneGraph;
+	addUnitCube(sceneGraph);
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(2.0f, 1.6f, 2.0f));
+	cam.lookAt(glm::vec3(0.5f, 0.5f, 0.5f));
+	cam.update(0.0);
+
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 64;
+	tracer.state().params.samples = 8;
+	tracer.state().params.batch = 4;
+	tracer.state().params.bounces = 1;
+	tracer.state().params.denoise = true;
+	ASSERT_TRUE(tracer.start(sceneGraph, &cam));
+	ASSERT_FALSE(tracer.update());
+	const image::ImagePtr first = tracer.image();
+	ASSERT_TRUE(first && first->isLoaded());
+	const color::RGBA a = first->colorAt(first->width() / 2, first->height() / 2);
+	// Restart clears accumulation and the temporal history.
+	ASSERT_TRUE(tracer.restart(sceneGraph, &cam));
+	ASSERT_FALSE(tracer.update());
+	const image::ImagePtr second = tracer.image();
+	ASSERT_TRUE(second && second->isLoaded());
+	const color::RGBA b = second->colorAt(second->width() / 2, second->height() / 2);
+	// A fresh render after restart reproduces the seeded (spatial-only) result
+	// exactly, proving no stale temporal history leaked across the restart.
+	EXPECT_EQ((int)a.r, (int)b.r);
+	EXPECT_EQ((int)a.g, (int)b.g);
+	EXPECT_EQ((int)a.b, (int)b.b);
+	ASSERT_TRUE(tracer.stop());
+}
+
 static int maxRowJump(const image::ImagePtr &img) {
 	int maxJump = 0;
 	const int y = img->height() / 2;

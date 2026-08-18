@@ -1589,6 +1589,7 @@ bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const v
 	_webGPUOutputs.resize((size_t)_width * (size_t)_height);
 #endif
 	_sample = 0;
+	_temporalValid = false;
 	_state.started = true;
 	Log::debug("Started voxel DDA path tracer %ix%i", _width, _height);
 	return true;
@@ -1765,7 +1766,7 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 	return false;
 }
 
-void VoxelDDAPathTracer::denoiseColor(float *rgb) const {
+void VoxelDDAPathTracer::denoiseColor(float *rgb) {
 	const int w = _width;
 	const int h = _height;
 	const int n = w * h;
@@ -1909,6 +1910,138 @@ void VoxelDDAPathTracer::denoiseColor(float *rgb) const {
 		rgb[i * 3 + 1] = src[i * 3 + 1] * edgeFactor;
 		rgb[i * 3 + 2] = src[i * 3 + 2] * edgeFactor;
 	}
+	denoiseTemporal(rgb, normal.data(), albedo.data(), depth.data(), alpha.data());
+}
+
+void VoxelDDAPathTracer::denoiseTemporal(float *rgb, const float *normal, const float *albedo, const float *depth,
+										 const float *alpha) {
+	const int w = _width;
+	const int h = _height;
+	const int n = w * h;
+	if (n <= 0) {
+		return;
+	}
+	// First temporal frame (or a reset): seed the history from the current
+	// spatially-filtered result and return it unchanged.
+	const bool seed = !_temporalValid || _temporalColor.size() < (size_t)n * 3u ||
+		_temporalCount.size() < (size_t)n;
+	if (seed) {
+		_temporalColor.resize((size_t)n * 3u);
+		_temporalNormal.resize((size_t)n * 3u);
+		_temporalAlbedo.resize((size_t)n * 3u);
+		_temporalDepth.resize((size_t)n);
+		_temporalCount.resize((size_t)n);
+		core_memcpy(_temporalColor.data(), rgb, (size_t)n * 3u * sizeof(float));
+		core_memcpy(_temporalNormal.data(), normal, (size_t)n * 3u * sizeof(float));
+		core_memcpy(_temporalAlbedo.data(), albedo, (size_t)n * 3u * sizeof(float));
+		core_memcpy(_temporalDepth.data(), depth, (size_t)n * sizeof(float));
+		for (int i = 0; i < n; ++i) {
+			_temporalCount[i] = 1.0f;
+		}
+		_temporalCamera = _cameraData;
+		_temporalValid = true;
+		return;
+	}
+
+	// Motion-vector reprojection: reconstruct each pixel's world position from its
+	// depth and project it through the previous frame's view-projection. Identity
+	// while the camera is fixed during accumulation.
+	const glm::mat4 previousViewProjection = glm::inverse(_temporalCamera.inverseViewProjection);
+
+	core::Buffer<float> nextColor;
+	core::Buffer<float> nextNormal;
+	core::Buffer<float> nextAlbedo;
+	core::Buffer<float> nextDepth;
+	core::Buffer<float> nextCount;
+	nextColor.resize((size_t)n * 3u);
+	nextNormal.resize((size_t)n * 3u);
+	nextAlbedo.resize((size_t)n * 3u);
+	nextDepth.resize((size_t)n);
+	nextCount.resize((size_t)n);
+
+	const float maxHistory = 32.0f;
+
+	for (int y = 0; y < h; ++y) {
+		for (int x = 0; x < w; ++x) {
+			const int i = y * w + x;
+			const int i3 = i * 3;
+			// Transparent / background pixels keep the current color and reset
+			// history (there is no surface to reproject).
+			if (alpha[i] < 1.0e-3f || depth[i] <= 0.0f) {
+				nextColor[i3 + 0] = rgb[i3 + 0];
+				nextColor[i3 + 1] = rgb[i3 + 1];
+				nextColor[i3 + 2] = rgb[i3 + 2];
+				nextNormal[i3 + 0] = normal[i3 + 0];
+				nextNormal[i3 + 1] = normal[i3 + 1];
+				nextNormal[i3 + 2] = normal[i3 + 2];
+				nextAlbedo[i3 + 0] = albedo[i3 + 0];
+				nextAlbedo[i3 + 1] = albedo[i3 + 1];
+				nextAlbedo[i3 + 2] = albedo[i3 + 2];
+				nextDepth[i] = depth[i];
+				nextCount[i] = 0.0f;
+				continue;
+			}
+			const math::Ray ray = pathTracerCameraRay(_cameraData, (float)x + 0.5f, (float)y + 0.5f);
+			const glm::vec3 world = ray.origin + ray.direction * depth[i];
+			const glm::vec4 previousClip = previousViewProjection * glm::vec4(world, 1.0f);
+			float prevX = (float)x + 0.5f;
+			float prevY = (float)y + 0.5f;
+			if (previousClip.w > 1.0e-6f) {
+				const float ndcX = previousClip.x / previousClip.w;
+				const float ndcY = previousClip.y / previousClip.w;
+				prevX = (ndcX * 0.5f + 0.5f) * (float)w;
+				prevY = (1.0f - ndcY * 0.5f) * (float)h;
+			}
+			const int px = glm::clamp((int)glm::floor(prevX), 0, w - 1);
+			const int py = glm::clamp((int)glm::floor(prevY), 0, h - 1);
+			const int pi = py * w + px;
+			const int pi3 = pi * 3;
+
+			// History rejection: normal, depth, and albedo consistency (SVGF).
+			const float ndot = glm::clamp(normal[i3 + 0] * _temporalNormal[pi3 + 0] +
+										 normal[i3 + 1] * _temporalNormal[pi3 + 1] +
+										 normal[i3 + 2] * _temporalNormal[pi3 + 2], 0.0f, 1.0f);
+			const float normalWeight = glm::pow(ndot, 32.0f);
+			const float depthScale = 0.03f * glm::max(depth[i], _temporalDepth[pi]) + 0.01f;
+			const float depthDelta = glm::abs(depth[i] - _temporalDepth[pi]) / depthScale;
+			const float depthWeight = glm::exp(-depthDelta * depthDelta);
+			const float da0 = albedo[i3 + 0] - _temporalAlbedo[pi3 + 0];
+			const float da1 = albedo[i3 + 1] - _temporalAlbedo[pi3 + 1];
+			const float da2 = albedo[i3 + 2] - _temporalAlbedo[pi3 + 2];
+			const float albedoWeight = glm::exp(-(da0 * da0 + da1 * da1 + da2 * da2) * 80.0f);
+			const float rejectWeight = normalWeight * depthWeight * albedoWeight;
+
+			const float historyCount = _temporalCount[pi];
+			const float newCount = rejectWeight > 0.1f ? glm::min(historyCount + 1.0f, maxHistory) : 0.0f;
+			const float temporalAlpha = 1.0f / (1.0f + newCount);
+			const glm::vec3 historyColor(_temporalColor[pi3 + 0], _temporalColor[pi3 + 1],
+										 _temporalColor[pi3 + 2]);
+			const glm::vec3 spatialColor(rgb[i3 + 0], rgb[i3 + 1], rgb[i3 + 2]);
+			const glm::vec3 blended = glm::mix(historyColor, spatialColor, temporalAlpha);
+
+			nextColor[i3 + 0] = blended.x;
+			nextColor[i3 + 1] = blended.y;
+			nextColor[i3 + 2] = blended.z;
+			nextNormal[i3 + 0] = normal[i3 + 0];
+			nextNormal[i3 + 1] = normal[i3 + 1];
+			nextNormal[i3 + 2] = normal[i3 + 2];
+			nextAlbedo[i3 + 0] = albedo[i3 + 0];
+			nextAlbedo[i3 + 1] = albedo[i3 + 1];
+			nextAlbedo[i3 + 2] = albedo[i3 + 2];
+			nextDepth[i] = depth[i];
+			nextCount[i] = newCount;
+		}
+	}
+
+	core_memcpy(_temporalColor.data(), nextColor.data(), (size_t)n * 3u * sizeof(float));
+	core_memcpy(_temporalNormal.data(), nextNormal.data(), (size_t)n * 3u * sizeof(float));
+	core_memcpy(_temporalAlbedo.data(), nextAlbedo.data(), (size_t)n * 3u * sizeof(float));
+	core_memcpy(_temporalDepth.data(), nextDepth.data(), (size_t)n * sizeof(float));
+	core_memcpy(_temporalCount.data(), nextCount.data(), (size_t)n * sizeof(float));
+	_temporalCamera = _cameraData;
+
+	// The temporally accumulated color replaces the spatial-only result.
+	core_memcpy(rgb, _temporalColor.data(), (size_t)n * 3u * sizeof(float));
 }
 
 image::ImagePtr VoxelDDAPathTracer::image() {
