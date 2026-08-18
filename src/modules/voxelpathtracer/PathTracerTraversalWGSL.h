@@ -1627,6 +1627,32 @@ fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let invWeight = select(1.0, 1.0 / sumWeight, sumWeight > 1.0e-8);
     denoisePong[pixelIndex] = vec4<f32>(sum * invWeight, 0.0);
 }
+
+// ---------------------------------------------------------------------------
+// Adaptive-sampling convergence flag (roadmap item 3, step 3). A separate pass
+// that atomically counts still-unconverged pixels into one 4-byte counter, so
+// the driver can stop dispatching from a single read instead of reading back
+// the full per-pixel moments. Reuses pixelConverged (same predicate as the
+// primaryMain early-out), so the flag and the skip decision agree exactly.
+
+@group(0) @binding(0) var<storage, read> convergenceOutputs: array<PathTracerSampleOutput>;
+@group(0) @binding(1) var<uniform> convergenceParams: PathTracerPrimaryParams;
+@group(0) @binding(2) var<storage, read_write> unconvergedCount: array<atomic<u32>>;
+
+@compute @workgroup_size(64)
+fn convergenceMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let pixelIndex = invocation.x;
+    if (pixelIndex >= convergenceParams.pixelCount) {
+        return;
+    }
+    let count = u32(convergenceOutputs[pixelIndex].moments.y + 0.5);
+    let converged = convergenceParams.adaptiveEnabled != 0u &&
+        count >= convergenceParams.adaptiveMinSamples &&
+        pixelConverged(convergenceOutputs[pixelIndex], count, convergenceParams.adaptiveError);
+    if (!converged) {
+        atomicAdd(&unconvergedCount[0], 1u);
+    }
+}
 )WGSL";
 }
 
