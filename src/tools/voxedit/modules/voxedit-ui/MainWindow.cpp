@@ -1217,6 +1217,13 @@ void MainWindow::update(double nowSeconds) {
 	mainWidget(nowSeconds);
 	rightWidget();
 
+	// Deferred trace_start: if trace_start was called while the scene was
+	// still loading asynchronously, start now that the scene is ready.
+	if (_pendingTraceStart && !_sceneMgr->isLoading()) {
+		_pendingTraceStart = false;
+		_renderPanel.startPathTracer();
+	}
+
 	registerPopups();
 
 	ImGui::End();

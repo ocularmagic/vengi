@@ -521,6 +521,19 @@
 			expect(chunks.length > 0, 'WGSL source delimiters were not found');
 			const source = chunks.map(match => match[1]).join('');
 
+			// A settings restart aborts an in-flight batch and destroys its mapped
+			// readback buffers. The rejected stale mapAsync promise must not mark the
+			// still-live WebGPU backend failed after the restart.
+			const backendResponse = await fetch('../../PathTracerWebGPU.cpp');
+			expect(backendResponse.ok, `could not load WebGPU backend (${backendResponse.status})`);
+			const backendSource = await backendResponse.text();
+			expect(backendSource.includes('record.generation += 1'),
+				'abort/dropBuffers must invalidate in-flight async callbacks');
+			expect((backendSource.match(/const generation = record\.generation;/g) || []).length >= 3,
+				'every async readback must capture its dispatch generation');
+			expect(backendSource.includes('generation !== record.generation'),
+				'stale mapAsync completions must be ignored after restart');
+
 			const adapter = await navigator.gpu.requestAdapter();
 			expect(adapter, 'WebGPU adapter request failed');
 			const device = await adapter.requestDevice();
@@ -1662,7 +1675,7 @@
 				'4/4 adaptive-sampling early stop, 1/1 multi-bounce, 1/1 emitter sampling, ' +
 				'2/2 transparent transport, 1/1 ground, 1/1 media, 1/1 HDRI, ' +
 				'2/2 denoise tonemap lock-step, 2/2 denoise temporal seed + blend, 1/1 convergence flag, ' +
-				'2/2 64-sample 8-bounce second-start, ' +
+				'2/2 64-sample 8-bounce second-start, 1/1 mid-render abort/restart contract, ' +
 				'and 1/1 mid-render device-loss recovery cases passed';
 		}
 

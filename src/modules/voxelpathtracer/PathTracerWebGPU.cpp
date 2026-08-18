@@ -18,6 +18,31 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		nextHandle: 1,
 		backends: new Map(),
 		ready: Promise.resolve(),
+		// Request a device with the storage-buffer limits the tracer needs.
+		// The WebGPU DEFAULT maxStorageBufferBindingSize is only 128 MiB and
+		// maxBufferSize 256 MiB. At 1280x1280 the primary-hit and accumulated
+		// output buffers are ~150 MiB each, so with the defaults every
+		// createBindGroup fails validation, the compute pass never runs, and
+		// the readback stays all zero -> a fully black render with no CPU
+		// fallback (the JS errors are uncaptured, not thrown). Raise the
+		// limits to what the adapter actually reports.
+		async requestDevice(adapter) {
+			const wanted = ['maxStorageBufferBindingSize', 'maxBufferSize',
+				'maxComputeWorkgroupStorageSize', 'maxComputeInvocationsPerWorkgroup'];
+			const requiredLimits = {};
+			for (const name of wanted) {
+				const value = adapter.limits ? adapter.limits[name] : undefined;
+				if (typeof value === 'number' && value > 0) {
+					requiredLimits[name] = value;
+				}
+			}
+			try {
+				return await adapter.requestDevice({requiredLimits});
+			} catch (error) {
+				console.warn('Path tracer WebGPU: requiredLimits rejected, retrying with defaults:', error);
+				return await adapter.requestDevice();
+			}
+		},
 		destroyBuffer(record, name) {
 			const buffer = record[name];
 			if (!buffer) {
@@ -47,6 +72,7 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 			return buffer;
 		},
 		dropBuffers(record) {
+			record.generation += 1;
 			for (const name of ['grids', 'cells', 'materials', 'emitters', 'ground', 'environmentTexels',
 				'environmentCdf', 'environmentData', 'mediaData', 'rays', 'hits', 'params', 'camera',
 				'primaryParams', 'lighting', 'sampleOutputs', 'readback', 'sampleReadback',
@@ -150,7 +176,7 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 				if (!adapter) {
 					throw new Error('WebGPU adapter request failed after device loss');
 				}
-				const device = await adapter.requestDevice();
+				const device = await this.requestDevice(adapter);
 				if (record.destroyed) {
 					device.destroy();
 					this.ready = Promise.resolve(device.lost).catch(() => {});
@@ -213,6 +239,7 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		source: "",
 		recoveries: 0,
 		maxRecoveries: 1,
+		generation: 0,
 		needsUpload: false,
 		fallbackMessage: ""
 	};
@@ -228,7 +255,7 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		if (!adapter) {
 			throw new Error('WebGPU adapter request failed');
 		}
-		const device = await adapter.requestDevice();
+		const device = await runtime.requestDevice(adapter);
 		if (record.destroyed) {
 			device.destroy();
 			runtime.ready = Promise.resolve(device.lost).catch(() => {});
@@ -450,8 +477,9 @@ EM_JS(int, vengiPathTracerWebGPUDispatch, (int handle, const void *rayPointer, u
 		encoder.copyBufferToBuffer(hits, 0, readback, 0, hitBytes);
 		record.device.queue.submit([encoder.finish()]);
 		record.busy = true;
+		const generation = record.generation;
 		readback.mapAsync(GPUMapMode.READ).then(() => {
-			if (record.destroyed || record.state !== 2) {
+			if (record.destroyed || generation !== record.generation || record.state !== 2) {
 				return;
 			}
 			record.result = new Uint8Array(readback.getMappedRange()).slice();
@@ -459,7 +487,10 @@ EM_JS(int, vengiPathTracerWebGPUDispatch, (int handle, const void *rayPointer, u
 			readback.unmap();
 			record.busy = false;
 		}).catch(error => {
-			if (record.destroyed || record.state === 1) {
+			if (record.destroyed || generation !== record.generation) {
+				return;
+			}
+			if (record.state === 1) {
 				record.busy = false;
 				return;
 			}
@@ -556,12 +587,13 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 		encoder.copyBufferToBuffer(record.sampleOutputs, 0, sampleReadback, 0, outputBytes);
 		record.device.queue.submit([encoder.finish()]);
 		record.busy = true;
+		const generation = record.generation;
 		const mappings = [sampleReadback.mapAsync(GPUMapMode.READ)];
 		if (readHits) {
 			mappings.push(record.readback.mapAsync(GPUMapMode.READ));
 		}
 		Promise.all(mappings).then(() => {
-			if (record.destroyed || record.state !== 2) {
+			if (record.destroyed || generation !== record.generation || record.state !== 2) {
 				return;
 			}
 			if (readHits) {
@@ -573,7 +605,10 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 			sampleReadback.unmap();
 			record.busy = false;
 		}).catch(error => {
-			if (record.destroyed || record.state === 1) {
+			if (record.destroyed || generation !== record.generation) {
+				return;
+			}
+			if (record.state === 1) {
 				record.busy = false;
 				return;
 			}
@@ -685,7 +720,27 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 		const historyB = runtime.ensureBuffer(record, 'temporalHistoryB', historyBytes, storage, 'temporal history B');
 		const finalImage = runtime.ensureBuffer(record, 'finalImage', imageBytes,
 			GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'final image');
-		const denoiseParams = runtime.ensureBuffer(record, 'denoiseParams', 48,
+		// One uniform SLOT PER PASS. queue.writeBuffer is ordered on the queue,
+		// NOT interleaved with the encoder's compute passes: writing a single
+		// 48-byte denoiseParams buffer between beginComputePass() calls that
+		// share one encoder makes ALL passes observe the LAST write (verified
+		// in isolation). That collapsed init/a-trous/temporal into the tonemap
+		// mode, so the tonemap read an all-zero scratch buffer and the render
+		// came out RGB 0 with alpha 255 -- a black image despite correct
+		// radiance in sampleOutputs. Give every pass its own 256-byte-aligned
+		// slot and bind with a dynamic-free explicit offset, exactly like
+		// primaryParams above.
+		const denoisePassPlan = [
+			// mode, step, seedFlag, ping, pong
+			[0, 0, 0, scratchB, scratchA], // init    -> scratchA
+			[1, 1, 0, scratchA, scratchB], // a-trous -> scratchB
+			[1, 2, 0, scratchB, scratchA], // a-trous -> scratchA
+			[1, 4, 0, scratchA, scratchB], // a-trous -> scratchB
+			[3, 0, seed, scratchB, scratchA], // temporal -> scratchA
+			[2, 0, 0, scratchA, scratchB]  // tonemap  <- scratchA
+		];
+		const denoiseParams = runtime.ensureBuffer(record, 'denoiseParams',
+			uniformStride * denoisePassPlan.length,
 			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'denoise params');
 		const denoiseCamera = runtime.ensureBuffer(record, 'denoiseCamera', 80,
 			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'denoise camera');
@@ -703,7 +758,7 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 			HEAPU8.slice(previousVPPointer, previousVPPointer + 64));
 		record.device.queue.writeBuffer(unconvergedCount, 0, new Uint32Array([0]));
 
-		const writeDenoiseParams = (mode, step, seedFlag) => {
+		const writeDenoiseParams = (slot, mode, step, seedFlag) => {
 			const data = new ArrayBuffer(48);
 			const view = new DataView(data);
 			view.setUint32(0, width, true);
@@ -713,7 +768,7 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 			view.setUint32(36, step, true);
 			view.setUint32(40, filmic, true);
 			view.setUint32(44, seedFlag, true);
-			record.device.queue.writeBuffer(denoiseParams, 0, data);
+			record.device.queue.writeBuffer(denoiseParams, uniformStride * slot, data);
 		};
 
 		const parity = record.temporalParity || 0;
@@ -769,13 +824,13 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 		}
 
 		// 3. Denoise (denoiseMain: init + 3 a-trous + temporal + tonemap).
-		const denoiseBindGroup = (ping, pong) => record.device.createBindGroup({
+		const denoiseBindGroup = (slot, ping, pong) => record.device.createBindGroup({
 			layout: record.denoisePipeline.getBindGroupLayout(0),
 			entries: [
 				{binding: 0, resource: {buffer: record.sampleOutputs}},
 				{binding: 1, resource: {buffer: ping}},
 				{binding: 2, resource: {buffer: pong}},
-				{binding: 3, resource: {buffer: denoiseParams}},
+				{binding: 3, resource: {buffer: denoiseParams, offset: uniformStride * slot, size: 48}},
 				{binding: 4, resource: {buffer: finalImage}},
 				{binding: 5, resource: {buffer: denoiseCamera}},
 				{binding: 6, resource: {buffer: denoisePreviousVP}},
@@ -783,29 +838,24 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 				{binding: 8, resource: {buffer: historyOut}}
 			]
 		});
-		const denoisePass = (mode, step, seedFlag, ping, pong) => {
-			writeDenoiseParams(mode, step, seedFlag);
+		denoisePassPlan.forEach(([mode, step, seedFlag, ping, pong], slot) => {
+			writeDenoiseParams(slot, mode, step, seedFlag);
 			const pass = encoder.beginComputePass();
 			pass.setPipeline(record.denoisePipeline);
-			pass.setBindGroup(0, denoiseBindGroup(ping, pong));
+			pass.setBindGroup(0, denoiseBindGroup(slot, ping, pong));
 			pass.dispatchWorkgroups(Math.ceil(pixelCount / 64));
 			pass.end();
-		};
-		denoisePass(0, 0, 0, scratchB, scratchA); // init -> scratchA
-		denoisePass(1, 1, 0, scratchA, scratchB); // pass 1 -> scratchB
-		denoisePass(1, 2, 0, scratchB, scratchA); // pass 2 -> scratchA
-		denoisePass(1, 4, 0, scratchA, scratchB); // pass 3 -> scratchB
-		denoisePass(3, 0, seed, scratchB, scratchA); // temporal -> scratchA
-		denoisePass(2, 0, 0, scratchA, scratchB); // tonemap <- scratchA
+		});
 
 		// 4. Read back the packed image and the unconverged count.
 		encoder.copyBufferToBuffer(finalImage, 0, finalReadback, 0, imageBytes);
 		encoder.copyBufferToBuffer(unconvergedCount, 0, convergenceReadback, 0, 4);
 		record.device.queue.submit([encoder.finish()]);
 		record.busy = true;
+		const generation = record.generation;
 		Promise.all([finalReadback.mapAsync(GPUMapMode.READ), convergenceReadback.mapAsync(GPUMapMode.READ)])
 			.then(() => {
-				if (record.destroyed || record.state !== 2) {
+				if (record.destroyed || generation !== record.generation || record.state !== 2) {
 					return;
 				}
 				record.denoiseResult = new Uint8Array(finalReadback.getMappedRange()).slice();
@@ -816,7 +866,10 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 				record.resultRayCount = pixelCount;
 				record.busy = false;
 			}).catch(error => {
-				if (record.destroyed || record.state === 1) {
+				if (record.destroyed || generation !== record.generation) {
+					return;
+				}
+				if (record.state === 1) {
 					record.busy = false;
 					return;
 				}

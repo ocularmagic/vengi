@@ -349,6 +349,22 @@ app::AppState VoxEdit::onConstruct() {
 			_mainWindow->resetCamera();
 		}).setHelp(_("Reset cameras in viewports"));
 
+	command::Command::registerCommand("trace_start")
+		.setHandler([this] (const command::CommandArgs& args) {
+			if (_mainWindow == nullptr) {
+				return;
+			}
+			_mainWindow->startPathTracer();
+		}).setHelp(_("Start the path tracer from the current viewport camera"));
+
+	command::Command::registerCommand("trace_stop")
+		.setHandler([this] (const command::CommandArgs& args) {
+			if (_mainWindow == nullptr) {
+				return;
+			}
+			_mainWindow->stopPathTracer();
+		}).setHelp(_("Stop the path tracer"));
+
 	command::Command::registerCommand("camera_mode")
 		.addArg({"mode", command::ArgType::String, false, "", "Scene camera mode: free|top|bottom|left|right|front|back"})
 		.setHandler([this] (const command::CommandArgs& args) {
