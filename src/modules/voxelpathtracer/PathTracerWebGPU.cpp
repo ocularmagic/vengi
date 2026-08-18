@@ -94,6 +94,27 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 			record.resultRayCount = 0;
 			record.fallbackMessage = message;
 		},
+		pushValidationScope(record) {
+			record.device.pushErrorScope('validation');
+			return {device: record.device, generation: record.generation};
+		},
+		popValidationScope(record, scope, label) {
+			return scope.device.popErrorScope().then(error => {
+				if (!error || record.destroyed || scope.generation !== record.generation ||
+					record.device !== scope.device) {
+					return error;
+				}
+				console.error(`Path tracer WebGPU ${label} validation failed:`, error.message);
+				this.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer');
+				return error;
+			}).catch(error => {
+				if (!record.destroyed && scope.generation === record.generation &&
+					record.device === scope.device) {
+					console.error(`Path tracer WebGPU ${label} error-scope readback failed:`, error);
+				}
+				return null;
+			});
+		},
 		async attachDevice(record, device, source) {
 			record.device = device;
 			device.lost.then(info => {
@@ -107,8 +128,10 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 				const error = event.error;
 				const oom = error && error.constructor && error.constructor.name === 'GPUOutOfMemoryError';
 				console.error('Path tracer WebGPU uncaptured error:', error && error.message);
-				if (oom && !record.destroyed) {
-					this.fail(record, 'WebGPU ran out of GPU memory; continuing on the CPU renderer');
+				if (!record.destroyed) {
+					this.fail(record, oom ?
+						'WebGPU ran out of GPU memory; continuing on the CPU renderer' :
+						'WebGPU dispatch was rejected; continuing on the CPU renderer');
 				}
 			});
 			const module = device.createShaderModule({label: 'voxel path tracer traversal', code: source});
@@ -443,7 +466,9 @@ EM_JS(int, vengiPathTracerWebGPUDispatch, (int handle, const void *rayPointer, u
 		record.gridCount === 0 || rayCount === 0) {
 		return 0;
 	}
+	let validationScope = null;
 	try {
+		validationScope = runtime.pushValidationScope(record);
 		const rayBytes = rayCount * 64;
 		const hitBytes = rayCount * 96;
 		const rays = runtime.ensureBuffer(record, 'rays', rayBytes,
@@ -478,8 +503,19 @@ EM_JS(int, vengiPathTracerWebGPUDispatch, (int handle, const void *rayPointer, u
 		record.device.queue.submit([encoder.finish()]);
 		record.busy = true;
 		const generation = record.generation;
-		readback.mapAsync(GPUMapMode.READ).then(() => {
+		const mapping = readback.mapAsync(GPUMapMode.READ).then(() => null, error => error);
+		const validation = runtime.popValidationScope(record, validationScope, 'dispatch');
+		validationScope = null;
+		Promise.all([mapping, validation]).then(([mapError, validationError]) => {
 			if (record.destroyed || generation !== record.generation || record.state !== 2) {
+				return;
+			}
+			if (validationError) {
+				return;
+			}
+			if (mapError) {
+				runtime.fail(record, 'WebGPU readback failed; continuing on the CPU renderer');
+				console.error('Path tracer WebGPU readback failed:', mapError);
 				return;
 			}
 			record.result = new Uint8Array(readback.getMappedRange()).slice();
@@ -499,6 +535,9 @@ EM_JS(int, vengiPathTracerWebGPUDispatch, (int handle, const void *rayPointer, u
 		});
 		return 1;
 	} catch (error) {
+		if (validationScope) {
+			runtime.popValidationScope(record, validationScope, 'dispatch');
+		}
 		runtime.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer');
 		console.error('Path tracer WebGPU dispatch failed:', error);
 		return 0;
@@ -514,7 +553,9 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 		record.gridCount === 0 || pixelCount === 0 || sampleCount === 0) {
 		return 0;
 	}
+	let validationScope = null;
 	try {
+		validationScope = runtime.pushValidationScope(record);
 		const hitBytes = pixelCount * 96;
 		const outputBytes = pixelCount * 96;
 		const paramsBytes = HEAPU8.slice(paramsPointer, paramsPointer + 32);
@@ -592,8 +633,20 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 		if (readHits) {
 			mappings.push(record.readback.mapAsync(GPUMapMode.READ));
 		}
-		Promise.all(mappings).then(() => {
+		const mapping = Promise.all(mappings.map(promise => promise.then(() => null, error => error)))
+			.then(errors => errors.find(error => error) || null);
+		const validation = runtime.popValidationScope(record, validationScope, 'primary dispatch');
+		validationScope = null;
+		Promise.all([mapping, validation]).then(([mapError, validationError]) => {
 			if (record.destroyed || generation !== record.generation || record.state !== 2) {
+				return;
+			}
+			if (validationError) {
+				return;
+			}
+			if (mapError) {
+				runtime.fail(record, 'WebGPU readback failed; continuing on the CPU renderer');
+				console.error('Path tracer WebGPU primary readback failed:', mapError);
 				return;
 			}
 			if (readHits) {
@@ -617,6 +670,9 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 		});
 		return 1;
 	} catch (error) {
+		if (validationScope) {
+			runtime.popValidationScope(record, validationScope, 'primary dispatch');
+		}
 		runtime.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer');
 		console.error('Path tracer WebGPU primary dispatch failed:', error);
 		return 0;
@@ -675,7 +731,9 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 		record.gridCount === 0 || sampleCount === 0 || width === 0 || height === 0) {
 		return 0;
 	}
+	let validationScope = null;
 	try {
+		validationScope = runtime.pushValidationScope(record);
 		const pixelCount = width * height;
 		const outputBytes = pixelCount * 96;
 		const scratchBytes = pixelCount * 16;
@@ -853,31 +911,46 @@ EM_JS(int, vengiPathTracerWebGPURenderBatch,
 		record.device.queue.submit([encoder.finish()]);
 		record.busy = true;
 		const generation = record.generation;
-		Promise.all([finalReadback.mapAsync(GPUMapMode.READ), convergenceReadback.mapAsync(GPUMapMode.READ)])
-			.then(() => {
-				if (record.destroyed || generation !== record.generation || record.state !== 2) {
-					return;
-				}
-				record.denoiseResult = new Uint8Array(finalReadback.getMappedRange()).slice();
-				record.convergenceResult =
-					new Uint32Array(convergenceReadback.getMappedRange().slice(0))[0];
-				finalReadback.unmap();
-				convergenceReadback.unmap();
-				record.resultRayCount = pixelCount;
-				record.busy = false;
-			}).catch(error => {
-				if (record.destroyed || generation !== record.generation) {
-					return;
-				}
-				if (record.state === 1) {
-					record.busy = false;
-					return;
-				}
+		const mappings = [finalReadback.mapAsync(GPUMapMode.READ), convergenceReadback.mapAsync(GPUMapMode.READ)];
+		const mapping = Promise.all(mappings.map(promise => promise.then(() => null, error => error)))
+			.then(errors => errors.find(error => error) || null);
+		const validation = runtime.popValidationScope(record, validationScope, 'batch dispatch');
+		validationScope = null;
+		Promise.all([mapping, validation]).then(([mapError, validationError]) => {
+			if (record.destroyed || generation !== record.generation || record.state !== 2) {
+				return;
+			}
+			if (validationError) {
+				return;
+			}
+			if (mapError) {
 				runtime.fail(record, 'WebGPU readback failed; continuing on the CPU renderer');
-				console.error('Path tracer WebGPU batch readback failed:', error);
-			});
+				console.error('Path tracer WebGPU batch readback failed:', mapError);
+				return;
+			}
+			record.denoiseResult = new Uint8Array(finalReadback.getMappedRange()).slice();
+			record.convergenceResult =
+				new Uint32Array(convergenceReadback.getMappedRange().slice(0))[0];
+			finalReadback.unmap();
+			convergenceReadback.unmap();
+			record.resultRayCount = pixelCount;
+			record.busy = false;
+		}).catch(error => {
+			if (record.destroyed || generation !== record.generation) {
+				return;
+			}
+			if (record.state === 1) {
+				record.busy = false;
+				return;
+			}
+			runtime.fail(record, 'WebGPU readback failed; continuing on the CPU renderer');
+			console.error('Path tracer WebGPU batch readback failed:', error);
+		});
 		return 1;
 	} catch (error) {
+		if (validationScope) {
+			runtime.popValidationScope(record, validationScope, 'batch dispatch');
+		}
 		runtime.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer');
 		console.error('Path tracer WebGPU batch dispatch failed:', error);
 		return 0;

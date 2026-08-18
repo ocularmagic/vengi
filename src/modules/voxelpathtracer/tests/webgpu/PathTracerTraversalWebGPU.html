@@ -533,6 +533,23 @@
 				'every async readback must capture its dispatch generation');
 			expect(backendSource.includes('generation !== record.generation'),
 				'stale mapAsync completions must be ignored after restart');
+			const dispatchScopePushes = backendSource.match(/runtime\.pushValidationScope\(record\)/g) || [];
+			const dispatchScopePops = backendSource.match(/runtime\.popValidationScope\(record, validationScope/g) || [];
+			expect(backendSource.includes("record.device.pushErrorScope('validation')"),
+				'dispatch validation scopes must use GPUDevice.pushErrorScope');
+			expect(backendSource.includes('scope.device.popErrorScope()'),
+				'dispatch validation scopes must use GPUDevice.popErrorScope');
+			expect(dispatchScopePushes.length >= 3,
+				'every WebGPU dispatch entry point must capture validation errors');
+			expect(dispatchScopePops.length >= dispatchScopePushes.length,
+				'every WebGPU dispatch validation scope must be popped');
+			expect(backendSource.includes("this.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer')"),
+				'uncaptured validation errors must stop WebGPU and select the CPU renderer');
+			const tracerResponse = await fetch('../../VoxelDDAPathTracer.cpp');
+			expect(tracerResponse.ok, `could not load WebGPU caller (${tracerResponse.status})`);
+			const tracerSource = await tracerResponse.text();
+			expect(tracerSource.includes('jsMessage.contains("dispatch")'),
+				'asynchronous validation failures must be classified as rejected dispatches');
 
 			const adapter = await navigator.gpu.requestAdapter();
 			expect(adapter, 'WebGPU adapter request failed');
