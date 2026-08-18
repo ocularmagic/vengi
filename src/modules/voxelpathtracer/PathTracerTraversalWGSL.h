@@ -63,6 +63,10 @@ struct PathTracerPrimaryParams {
     sampleIndex: u32,
     gridCount: u32,
     emitterCount: u32,
+    adaptiveEnabled: u32,
+    adaptiveError: f32,
+    adaptiveMinSamples: u32,
+    reserved: u32,
 };
 
 struct PathTracerLightingData {
@@ -1301,20 +1305,39 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     hits[rayIndex] = traceScene(ray, dispatchParams.gridCount);
 }
 
+fn pixelConverged(previous: PathTracerSampleOutput, count: u32, errorTolerance: f32) -> bool {
+    let countF = f32(count);
+    let historyMeanColor = previous.radianceAlpha.xyz / countF;
+    let historyMean = dot(historyMeanColor, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let variance = max(previous.moments.x / countF - historyMean * historyMean, 0.0);
+    let standardError = sqrt(variance / countF);
+    let relativeError = standardError / max(historyMean, 0.01);
+    return relativeError <= errorTolerance;
+}
+
 @compute @workgroup_size(64)
 fn primaryMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let pixelIndex = invocation.x;
     if (pixelIndex >= primaryParams.pixelCount) {
         return;
     }
+    let count = u32(sampleOutputs[pixelIndex].moments.y + 0.5);
+    // Adaptive sampling: stop a pixel once its accumulated mean is stable so it
+    // no longer receives rays. The Sobol sequence index stays
+    // primaryParams.sampleIndex (the global pass count), so an active pixel's
+    // samples are bit-identical to the non-adaptive schedule.
+    if (primaryParams.adaptiveEnabled != 0u && count >= primaryParams.adaptiveMinSamples &&
+        pixelConverged(sampleOutputs[pixelIndex], count, primaryParams.adaptiveError)) {
+        return;
+    }
     let ray = primaryRay(pixelIndex);
     let closest = traceTransportScene(ray, primaryParams.gridCount);
     hits[pixelIndex] = closest;
 	var sample = shadePrimary(pixelIndex, ray, closest);
-	if (primaryParams.sampleIndex >= 16u) {
+	if (count >= 16u) {
 		sample = clampSampleHistory(sampleOutputs[pixelIndex], sample);
 	}
-    if (primaryParams.sampleIndex == 0u) {
+    if (count == 0u) {
         sampleOutputs[pixelIndex] = sample;
     } else {
         sampleOutputs[pixelIndex] = accumulateSample(sampleOutputs[pixelIndex], sample);

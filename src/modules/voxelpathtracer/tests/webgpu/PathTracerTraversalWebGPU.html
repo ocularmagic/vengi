@@ -127,6 +127,25 @@
 			return data;
 		}
 
+		// 32-byte PathTracerPrimaryParams uniform. Matches the C++/WGSL struct:
+		// pixelCount, sampleIndex, gridCount, emitterCount, adaptiveEnabled,
+		// adaptiveError (f32), adaptiveMinSamples, reserved.
+		function primaryParamsBytes(pixelCount, sampleIndex, gridCount, emitterCount,
+			adaptiveEnabled = 0, adaptiveError = 0.02, adaptiveMinSamples = 16) {
+			const data = new ArrayBuffer(32);
+			const u32 = new Uint32Array(data);
+			const f32 = new Float32Array(data);
+			u32[0] = pixelCount;
+			u32[1] = sampleIndex;
+			u32[2] = gridCount;
+			u32[3] = emitterCount;
+			u32[4] = adaptiveEnabled;
+			f32[5] = adaptiveError;
+			u32[6] = adaptiveMinSamples;
+			u32[7] = 0;
+			return data;
+		}
+
 		function makeHdriLighting() {
 			const data = makeLighting(1);
 			const view = new DataView(data);
@@ -557,7 +576,7 @@
 			const camera = uploadBuffer(device, makeCamera(), GPUBufferUsage.UNIFORM, 'camera');
 			const sampleIndex = 0;
 			const primaryParams = uploadBuffer(device,
-				new Uint32Array([4, sampleIndex, 1, 0]).buffer,
+				primaryParamsBytes(4, sampleIndex, 1, 0),
 				GPUBufferUsage.UNIFORM, 'primary params');
 			const lighting = uploadBuffer(device, makeLighting(), GPUBufferUsage.UNIFORM, 'lighting');
 			const sampleOutputs = device.createBuffer({
@@ -616,8 +635,10 @@
 			const nextSampleIndex = 1;
 			const thirdSampleIndex = 2;
 			const batchedParamData = new ArrayBuffer(512);
-			new Uint32Array(batchedParamData, 0, 4).set([4, nextSampleIndex, 1, 0]);
-			new Uint32Array(batchedParamData, 256, 4).set([4, thirdSampleIndex, 1, 0]);
+			new Uint8Array(batchedParamData, 0, 32).set(
+				new Uint8Array(primaryParamsBytes(4, nextSampleIndex, 1, 0)));
+			new Uint8Array(batchedParamData, 256, 32).set(
+				new Uint8Array(primaryParamsBytes(4, thirdSampleIndex, 1, 0)));
 			const nextPrimaryParams = uploadBuffer(device, batchedParamData,
 				GPUBufferUsage.UNIFORM, 'batched primary params');
 			const makeBatchedBindGroup = offset => device.createBindGroup({
@@ -628,7 +649,7 @@
 					{binding: 2, resource: {buffer: materials}},
 					{binding: 4, resource: {buffer: primaryHits}},
 					{binding: 6, resource: {buffer: camera}},
-					{binding: 7, resource: {buffer: nextPrimaryParams, offset, size: 16}},
+					{binding: 7, resource: {buffer: nextPrimaryParams, offset, size: 32}},
 					{binding: 8, resource: {buffer: lighting}},
 					{binding: 9, resource: {buffer: sampleOutputs}},
 					{binding: 10, resource: {buffer: emptyEmitters}},
@@ -667,6 +688,77 @@
 			validateSampleOutputs(accumulatedOutput, [sampleIndex, nextSampleIndex, thirdSampleIndex]);
 
 			device.pushErrorScope('validation');
+			// Adaptive sampling (roadmap item 3): a flat, uniformly-lit scene reaches
+			// the relative standard-error floor early, so each pixel's accumulated
+			// sample count stops below the dispatched pass count. Exercises the WGSL
+			// pixelConverged predicate and the per-pixel early return in primaryMain.
+			const adaptiveMinSamples = 4;
+			const adaptiveSampleCount = 32;
+			const adaptiveError = 0.1;
+			const adaptiveOutputs = device.createBuffer({
+				label: 'adaptive outputs', size: 96 * 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+				mappedAtCreation: true
+			});
+			new Uint8Array(adaptiveOutputs.getMappedRange()).fill(0);
+			adaptiveOutputs.unmap();
+			const adaptiveBindGroup = params => device.createBindGroup({
+				layout: primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: grids}},
+					{binding: 1, resource: {buffer: cells}},
+					{binding: 2, resource: {buffer: materials}},
+					{binding: 4, resource: {buffer: primaryHits}},
+					{binding: 6, resource: {buffer: camera}},
+					{binding: 7, resource: {buffer: params}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: adaptiveOutputs}},
+					{binding: 10, resource: {buffer: emptyEmitters}},
+					{binding: 11, resource: {buffer: emptyGround}},
+					{binding: 12, resource: {buffer: emptyEnvironmentTexels}},
+					{binding: 13, resource: {buffer: emptyEnvironmentCdf}},
+					{binding: 14, resource: {buffer: emptyEnvironmentData}},
+					{binding: 15, resource: {buffer: emptyMediaData}}
+				]
+			});
+			for (let sampleIndex = 0; sampleIndex < adaptiveSampleCount; ++sampleIndex) {
+				const adaptiveParams = uploadBuffer(device,
+					primaryParamsBytes(4, sampleIndex, 1, 0, 1, adaptiveError, adaptiveMinSamples),
+					GPUBufferUsage.UNIFORM, `adaptive params ${sampleIndex}`);
+				const adaptiveEncoder = device.createCommandEncoder();
+				const adaptivePass = adaptiveEncoder.beginComputePass();
+				adaptivePass.setPipeline(primaryPipeline);
+				adaptivePass.setBindGroup(0, adaptiveBindGroup(adaptiveParams));
+				adaptivePass.dispatchWorkgroups(1);
+				adaptivePass.end();
+				device.queue.submit([adaptiveEncoder.finish()]);
+			}
+			const adaptiveReadback = device.createBuffer({
+				label: 'adaptive readback', size: 96 * 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const adaptiveCopy = device.createCommandEncoder();
+			adaptiveCopy.copyBufferToBuffer(adaptiveOutputs, 0, adaptiveReadback, 0, 96 * 4);
+			device.queue.submit([adaptiveCopy.finish()]);
+			await adaptiveReadback.mapAsync(GPUMapMode.READ);
+			const adaptiveData = adaptiveReadback.getMappedRange().slice(0);
+			adaptiveReadback.unmap();
+			{
+				const view = new DataView(adaptiveData);
+				for (let pixelIndex = 0; pixelIndex < 4; ++pixelIndex) {
+					const offset = pixelIndex * 96;
+					const count = view.getFloat32(offset + 84, true);
+					expect(Number.isFinite(count) && count >= adaptiveMinSamples,
+						`adaptive pixel ${pixelIndex} converged below the floor (${count})`);
+					expect(count < adaptiveSampleCount,
+						`adaptive pixel ${pixelIndex} did not stop early (${count} of ${adaptiveSampleCount})`);
+				}
+			}
+			const adaptiveValidationError = await device.popErrorScope();
+			expect(!adaptiveValidationError, adaptiveValidationError
+				? adaptiveValidationError.message : 'adaptive validation error');
+
+			device.pushErrorScope('validation');
 			const bounceGrids = uploadBuffer(device, makeBounceGrid(), storage, 'bounce grids');
 			const bounceCells = uploadBuffer(device, makeBounceCells(), storage, 'bounce cells');
 			const bounceMaterials = uploadBuffer(device, makeBounceMaterials(), storage, 'bounce materials');
@@ -689,7 +781,7 @@
 					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
 				});
 				for (let sampleIndex = 0; sampleIndex < bounceSampleCount; ++sampleIndex) {
-					const params = uploadBuffer(device, new Uint32Array([1, sampleIndex, 1, 0]).buffer,
+					const params = uploadBuffer(device, primaryParamsBytes(1, sampleIndex, 1, 0),
 						GPUBufferUsage.UNIFORM, `bounce params ${sampleIndex}`);
 					const bounceBindGroup = device.createBindGroup({
 						layout: primaryPipeline.getBindGroupLayout(0),
@@ -742,7 +834,7 @@
 				`second bounce did not transport emissive energy (${oneBounceLuminance} -> ${twoBounceLuminance})`);
 			near(twoBounce.getFloat32(84, true), bounceSampleCount, 0.0002, 'multi-bounce sample count');
 			const directEmitter = uploadBuffer(device, makeEmitter(), storage, 'direct emitter');
-			const directEmitterParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 1]).buffer,
+			const directEmitterParams = uploadBuffer(device, primaryParamsBytes(1, 0, 1, 1),
 				GPUBufferUsage.UNIFORM, 'direct emitter params');
 			const directEmitterLighting = uploadBuffer(device, makeLighting(1),
 				GPUBufferUsage.UNIFORM, 'direct emitter lighting');
@@ -801,7 +893,7 @@
 				storage, 'transparent cells');
 			const transparentCamera = uploadBuffer(device, makeCamera(), GPUBufferUsage.UNIFORM,
 				'transparent camera');
-			const transparentParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+			const transparentParams = uploadBuffer(device, primaryParamsBytes(1, 0, 1, 0),
 				GPUBufferUsage.UNIFORM, 'transparent params');
 			const runTransparentCase = async (surfaceType, maxBounces) => {
 				const transparentMaterials = uploadBuffer(device, makeTransparentMaterials(surfaceType),
@@ -873,7 +965,7 @@
 			const groundBuffer = uploadBuffer(device, makeGround(true), GPUBufferUsage.UNIFORM, 'ground');
 			const groundCamera = uploadBuffer(device, makeGroundCamera(), GPUBufferUsage.UNIFORM,
 				'ground camera');
-			const groundParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+			const groundParams = uploadBuffer(device, primaryParamsBytes(1, 0, 1, 0),
 				GPUBufferUsage.UNIFORM, 'ground params');
 			const groundHits = device.createBuffer({
 				label: 'ground hits', size: 96,
@@ -935,7 +1027,7 @@
 			const mediaCells = uploadBuffer(device, new Uint32Array([1, 1]).buffer, storage, 'media cells');
 			const mediaControl = uploadBuffer(device, makeMediaData(true), GPUBufferUsage.UNIFORM,
 				'media data');
-			const mediaParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+			const mediaParams = uploadBuffer(device, primaryParamsBytes(1, 0, 1, 0),
 				GPUBufferUsage.UNIFORM, 'media params');
 			const mediaHits = device.createBuffer({label: 'media hits', size: 96, usage: storage});
 			const mediaOutputs = device.createBuffer({
@@ -1005,7 +1097,7 @@
 			const hdriLighting = uploadBuffer(device, makeHdriLighting(), GPUBufferUsage.UNIFORM,
 				'HDRI lighting');
 			const hdriCamera = uploadBuffer(device, makeHdriCamera(), GPUBufferUsage.UNIFORM, 'HDRI camera');
-			const hdriParams = uploadBuffer(device, new Uint32Array([1, 0, 1, 0]).buffer,
+			const hdriParams = uploadBuffer(device, primaryParamsBytes(1, 0, 1, 0),
 				GPUBufferUsage.UNIFORM, 'HDRI params');
 			const hdriHits = device.createBuffer({label: 'HDRI hits', size: 96, usage: storage});
 			const hdriOutputs = device.createBuffer({
@@ -1074,7 +1166,8 @@
 				const uniformStride = 256;
 				const paramData = new ArrayBuffer(uniformStride * sampleCount);
 				for (let sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
-					new Uint32Array(paramData, uniformStride * sampleIndex, 4).set([4, sampleIndex, 1, 0]);
+					new Uint8Array(paramData, uniformStride * sampleIndex, 32).set(
+						new Uint8Array(primaryParamsBytes(4, sampleIndex, 1, 0)));
 				}
 				const secondParams = uploadBuffer(gpuDevice, paramData, GPUBufferUsage.UNIFORM,
 					`${label} params`);
@@ -1095,7 +1188,7 @@
 							{binding: 4, resource: {buffer: secondHits}},
 							{binding: 6, resource: {buffer: resources.camera}},
 							{binding: 7, resource: {buffer: secondParams,
-								offset: uniformStride * sampleIndex, size: 16}},
+								offset: uniformStride * sampleIndex, size: 32}},
 							{binding: 8, resource: {buffer: secondLighting}},
 							{binding: 9, resource: {buffer: secondOutputs}},
 							{binding: 10, resource: {buffer: resources.emitters}},
@@ -1220,7 +1313,7 @@
 			});
 			new Uint8Array(midOutputs.getMappedRange()).fill(0);
 			midOutputs.unmap();
-			const midParams = uploadBuffer(doomedDevice, new Uint32Array([4, 0, 1, 0]).buffer,
+			const midParams = uploadBuffer(doomedDevice, primaryParamsBytes(4, 0, 1, 0),
 				GPUBufferUsage.UNIFORM, 'mid-loss params');
 			const midLighting = uploadBuffer(doomedDevice, makeLighting(1), GPUBufferUsage.UNIFORM,
 				'mid-loss lighting');
@@ -1306,8 +1399,9 @@
 
 			return `${compilation.messages.length} compiler message(s); ` +
 				'4/4 traversal, 4/4 primary-ray, 4/4 shading/AOV, 4/4 accumulation, ' +
-				'1/1 multi-bounce, 1/1 emitter sampling, 2/2 transparent transport, ' +
-				'1/1 ground, 1/1 media, 1/1 HDRI, 2/2 64-sample 8-bounce second-start, ' +
+				'4/4 adaptive-sampling early stop, 1/1 multi-bounce, 1/1 emitter sampling, ' +
+				'2/2 transparent transport, 1/1 ground, 1/1 media, 1/1 HDRI, ' +
+				'2/2 64-sample 8-bounce second-start, ' +
 				'and 1/1 mid-render device-loss recovery cases passed';
 		}
 

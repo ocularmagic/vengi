@@ -464,8 +464,8 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 	try {
 		const hitBytes = pixelCount * 96;
 		const outputBytes = pixelCount * 96;
-		const paramsBytes = HEAPU8.slice(paramsPointer, paramsPointer + 16);
-		const baseParams = new Uint32Array(paramsBytes.buffer, paramsBytes.byteOffset, 4);
+		const paramsBytes = HEAPU8.slice(paramsPointer, paramsPointer + 32);
+		const baseParams = new Uint32Array(paramsBytes.buffer, paramsBytes.byteOffset, 8);
 		const sampleIndex = baseParams[1];
 		const hitUsage = GPUBufferUsage.STORAGE | (readHits ? GPUBufferUsage.COPY_SRC : 0);
 		runtime.ensureBuffer(record, 'hits', hitBytes, hitUsage, 'path tracer primary hits');
@@ -511,7 +511,7 @@ EM_JS(int, vengiPathTracerWebGPUDispatchPrimary,
 					{binding: 4, resource: {buffer: record.hits}},
 					{binding: 6, resource: {buffer: record.camera}},
 					{binding: 7, resource: {buffer: record.primaryParams,
-						offset: uniformStride * sampleOffset, size: 16}},
+						offset: uniformStride * sampleOffset, size: 32}},
 					{binding: 8, resource: {buffer: record.lighting}},
 					{binding: 9, resource: {buffer: record.sampleOutputs}},
 					{binding: 10, resource: {buffer: record.emitters}},

@@ -75,6 +75,13 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 		ImGui::TooltipTextUnformatted(_("Lower resolution ratio used while samples accumulate"));
 		changed += ImGui::SliderInt(_("Batch"), &params.batch, 1, 16);
 		ImGui::TooltipTextUnformatted(_("Samples computed per update step"));
+		ImGui::Separator();
+		changed += ImGui::Checkbox(_("Adaptive sampling"), &params.adaptive);
+		ImGui::TooltipTextUnformatted(_("Stop each pixel once its mean stabilizes; only still-noisy pixels keep getting rays. Samples becomes a safety cap."));
+		ImGui::BeginDisabled(!params.adaptive);
+		changed += ImGui::SliderFloat(_("Adaptive error"), &params.adaptiveError, 0.001f, 0.2f);
+		ImGui::TooltipTextUnformatted(_("Relative standard-error threshold for a pixel to stop sampling"));
+		ImGui::EndDisabled();
 		ImGui::PopItemWidth();
 		ImGui::EndMenu();
 	}

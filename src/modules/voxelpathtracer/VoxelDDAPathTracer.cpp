@@ -48,6 +48,11 @@ constexpr uint8_t kSurfGlass = (uint8_t)PathTracerSurfaceGlass;
 constexpr uint8_t kSurfMetal = (uint8_t)PathTracerSurfaceMetal;
 constexpr uint8_t kSurfMedia = (uint8_t)PathTracerSurfaceMedia;
 
+// Adaptive sampling constants. Keep the minimum-sample floor and the absolute
+// luminance noise floor in sync with the WGSL convergence predicate.
+constexpr int kAdaptiveMinSamples = 16;
+constexpr float kAdaptiveNoiseFloor = 0.01f;
+
 #ifdef __EMSCRIPTEN__
 static PathTracerLightingData webGPULightingData(const PathTracerState &state, bool hasHdri) {
 	PathTracerLightingData lighting;
@@ -1420,9 +1425,19 @@ void VoxelDDAPathTracer::accumulateSample() {
 	const int w = _width;
 	const int h = _height;
 	const int sample = _sample;
-	app::for_parallel(0, h, [this, w, h, sample](int y0, int y1) {
+	const bool adaptive = _state.params.adaptive;
+	app::for_parallel(0, h, [this, w, h, sample, adaptive](int y0, int y1) {
 		for (int y = y0; y < y1; ++y) {
 			for (int x = 0; x < w; ++x) {
+				const int p = y * w + x;
+				const int count = _accumCount[p];
+				// Adaptive sampling: a pixel whose mean is already stable no longer
+				// receives rays. The Sobol sequence index stays the global pass count,
+				// so an active pixel's samples are bit-identical to the non-adaptive
+				// schedule; converged pixels simply stop accumulating.
+				if (adaptive && count >= kAdaptiveMinSamples && pixelConverged(p)) {
+					continue;
+				}
 				const uint32_t pixelScramble = wangHash((uint32_t)(x + y * w) ^ 0xa511e9b3u);
 				const glm::vec2 cameraSample = sampling::sobol2D((uint32_t)sample, pixelScramble);
 				const float jx = (float)x + cameraSample.x;
@@ -1434,9 +1449,8 @@ void VoxelDDAPathTracer::accumulateSample() {
 				float guideFeature = 1.0f;
 				glm::vec4 c = tracePath(ray.origin, ray.direction, sample, pixelScramble, guideA, guideN, guideDepth,
 										guideFeature);
-				if (sample >= 16) {
-					const int p = y * w + x;
-					const float historyScale = 1.0f / (float)sample;
+				if (count >= kAdaptiveMinSamples) {
+					const float historyScale = 1.0f / (float)count;
 					const float mean = (0.2126f * _accum[p * 4 + 0] + 0.7152f * _accum[p * 4 + 1] +
 										0.0722f * _accum[p * 4 + 2]) * historyScale;
 					const float historyVariance = glm::max(0.0f, _accumLuma2[p] * historyScale - mean * mean);
@@ -1466,15 +1480,42 @@ void VoxelDDAPathTracer::accumulateSample() {
 				_accumNormal[g + 0] += guideN.x;
 				_accumNormal[g + 1] += guideN.y;
 				_accumNormal[g + 2] += guideN.z;
-				const int p = y * w + x;
 				_accumDepth[p] += guideDepth;
 				_accumFeature[p] += guideFeature;
 				const float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 				_accumLuma2[p] += luma * luma;
+				_accumCount[p] = count + 1;
 			}
 		}
 	});
 	++_sample;
+}
+
+bool VoxelDDAPathTracer::pixelConverged(int p) const {
+	const int count = _accumCount[p];
+	if (count < kAdaptiveMinSamples) {
+		return false;
+	}
+	const float inv = 1.0f / (float)count;
+	const float mean = (0.2126f * _accum[p * 4 + 0] + 0.7152f * _accum[p * 4 + 1] + 0.0722f * _accum[p * 4 + 2]) *
+					   inv;
+	const float variance = glm::max(0.0f, _accumLuma2[p] * inv - mean * mean);
+	const float stdErr = glm::sqrt(variance * inv);
+	const float relErr = stdErr / glm::max(mean, kAdaptiveNoiseFloor);
+	return relErr <= _state.params.adaptiveError;
+}
+
+bool VoxelDDAPathTracer::allPixelsConverged() const {
+	if (!_state.params.adaptive) {
+		return false;
+	}
+	const int n = _width * _height;
+	for (int p = 0; p < n; ++p) {
+		if (!pixelConverged(p)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera) {
@@ -1542,6 +1583,8 @@ bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const v
 	core_memset(_accumLuma2.data(), 0, _accumLuma2.size() * sizeof(float));
 	_accumFeature.resize((size_t)_width * (size_t)_height);
 	core_memset(_accumFeature.data(), 0, _accumFeature.size() * sizeof(float));
+	_accumCount.resize((size_t)_width * (size_t)_height);
+	core_memset(_accumCount.data(), 0, _accumCount.size() * sizeof(int));
 #ifdef __EMSCRIPTEN__
 	_webGPUOutputs.resize((size_t)_width * (size_t)_height);
 #endif
@@ -1613,6 +1656,9 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 				if (!_accumFeature.empty()) {
 					core_memset(_accumFeature.data(), 0, _accumFeature.size() * sizeof(float));
 				}
+				if (!_accumCount.empty()) {
+					core_memset(_accumCount.data(), 0, _accumCount.size() * sizeof(int));
+				}
 				_sample = 0;
 			}
 			if (!keepGpu) {
@@ -1655,7 +1701,7 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 				const uint32_t completedSamples = pixelCount == expectedPixels ?
 					pathTracerCopySampleOutputs(_webGPUOutputs.data(), pixelCount, _accum.data(),
 						_accumAlbedo.data(), _accumNormal.data(), _accumDepth.data(), _accumLuma2.data(),
-						_accumFeature.data()) : 0u;
+						_accumFeature.data(), _accumCount.data()) : 0u;
 				if (completedSamples > 0u) {
 					if (_sample == 0) {
 						Log::info("WebGPU path tracer active");
@@ -1672,10 +1718,13 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			}
 		}
 		if (_webGPUEnabled && !_webGPUScenePending && !_webGPUEnvironmentPending &&
-			!_webGPUDispatchPending && _sample < target) {
+			!_webGPUDispatchPending && _sample < target && !allPixelsConverged()) {
 			PathTracerPrimaryParams params;
 			params.pixelCount = static_cast<uint32_t>(_width * _height);
 			params.sampleIndex = static_cast<uint32_t>(_sample);
+			params.adaptiveEnabled = _state.params.adaptive ? 1u : 0u;
+			params.adaptiveError = _state.params.adaptiveError;
+			params.adaptiveMinSamples = static_cast<uint32_t>(kAdaptiveMinSamples);
 			const uint32_t sampleCount = static_cast<uint32_t>(glm::min(batch, target - _sample));
 			const PathTracerLightingData lighting = webGPULightingData(_state, _envIsHdri);
 			if (_webGPU.dispatchPrimary(_cameraData, params, lighting, sampleCount, false)) {
@@ -1695,7 +1744,7 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			if (currentSample) {
 				*currentSample = _sample;
 			}
-			if (_sample >= target && !_webGPUDispatchPending) {
+			if ((_sample >= target || allPixelsConverged()) && !_webGPUDispatchPending) {
 				_state.started = false;
 				return true;
 			}
@@ -1709,7 +1758,7 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 	if (currentSample) {
 		*currentSample = _sample;
 	}
-	if (_sample >= target) {
+	if (_sample >= target || allPixelsConverged()) {
 		_state.started = false;
 		return true;
 	}
@@ -1721,10 +1770,10 @@ void VoxelDDAPathTracer::denoiseColor(float *rgb) const {
 	const int h = _height;
 	const int n = w * h;
 	if (n <= 0 || _accumAlbedo.size() < (size_t)n * 3u || _accumNormal.size() < (size_t)n * 3u ||
-		_accumDepth.size() < (size_t)n || _accumLuma2.size() < (size_t)n || _accumFeature.size() < (size_t)n) {
+		_accumDepth.size() < (size_t)n || _accumLuma2.size() < (size_t)n || _accumFeature.size() < (size_t)n ||
+		_accumCount.size() < (size_t)n) {
 		return;
 	}
-	const float scale = (_sample > 0) ? (1.0f / (float)_sample) : 1.0f;
 	core::Buffer<float> albedo;
 	core::Buffer<float> normal;
 	core::Buffer<float> alpha;
@@ -1738,6 +1787,9 @@ void VoxelDDAPathTracer::denoiseColor(float *rgb) const {
 	variance.resize((size_t)n);
 	feature.resize((size_t)n);
 	for (int i = 0; i < n; ++i) {
+		// Adaptive sampling gives each pixel its own sample count, so the mean and
+		// variance are normalized per pixel rather than by the global pass count.
+		const float scale = 1.0f / (float)glm::max(_accumCount[i], 1);
 		albedo[i * 3 + 0] = _accumAlbedo[i * 3 + 0] * scale;
 		albedo[i * 3 + 1] = _accumAlbedo[i * 3 + 1] * scale;
 		albedo[i * 3 + 2] = _accumAlbedo[i * 3 + 2] * scale;
@@ -1863,10 +1915,12 @@ image::ImagePtr VoxelDDAPathTracer::image() {
 	if (_width <= 0 || _height <= 0 || _accum.empty()) {
 		return {};
 	}
-	const float scale = (_sample > 0) ? (1.0f / (float)_sample) : 1.0f;
+	const int n = _width * _height;
 	core::Buffer<float> hdr;
-	hdr.resize((size_t)_width * (size_t)_height * 3u);
-	for (int i = 0; i < _width * _height; ++i) {
+	hdr.resize((size_t)n * 3u);
+	const bool haveCounts = _accumCount.size() >= (size_t)n;
+	for (int i = 0; i < n; ++i) {
+		const float scale = haveCounts ? 1.0f / (float)glm::max(_accumCount[i], 1) : 1.0f;
 		hdr[i * 3 + 0] = _accum[i * 4 + 0] * scale;
 		hdr[i * 3 + 1] = _accum[i * 4 + 1] * scale;
 		hdr[i * 3 + 2] = _accum[i * 4 + 2] * scale;
@@ -1875,9 +1929,10 @@ image::ImagePtr VoxelDDAPathTracer::image() {
 		denoiseColor(hdr.data());
 	}
 	core::Buffer<uint8_t> rgba;
-	rgba.resize((size_t)_width * (size_t)_height * 4u);
-	for (int i = 0; i < _width * _height; ++i) {
+	rgba.resize((size_t)n * 4u);
+	for (int i = 0; i < n; ++i) {
 		glm::vec3 c(hdr[i * 3 + 0], hdr[i * 3 + 1], hdr[i * 3 + 2]);
+		const float scale = haveCounts ? 1.0f / (float)glm::max(_accumCount[i], 1) : 1.0f;
 		const float a = glm::clamp(_accum[i * 4 + 3] * scale, 0.0f, 1.0f);
 		const glm::vec3 ldr = pathTracerTonemap(c, _state.exposure, _state.filmic);
 		rgba[i * 4 + 0] = (uint8_t)glm::clamp(ldr.x * 255.0f, 0.0f, 255.0f);
