@@ -15,6 +15,11 @@ struct alignas(16) PathTracerPrimaryParams {
 	uint32_t sampleIndex = 0u;
 	uint32_t gridCount = 0u;
 	uint32_t emitterCount = 0u;
+	// Adaptive sampling: 0 or 1 enables variance-based per-pixel early stop.
+	uint32_t adaptiveEnabled = 0u;
+	float adaptiveError = 0.02f;
+	uint32_t adaptiveMinSamples = 16u;
+	uint32_t reserved = 0u;
 };
 
 struct alignas(16) PathTracerLightingData {
@@ -62,7 +67,7 @@ struct alignas(16) PathTracerSampleOutput {
 	glm::vec4 moments{0.0f};
 };
 
-static_assert(sizeof(PathTracerPrimaryParams) == 16u,
+static_assert(sizeof(PathTracerPrimaryParams) == 32u,
 			  "PathTracerPrimaryParams must match the WGSL uniform size");
 static_assert(alignof(PathTracerPrimaryParams) == 16u,
 			  "PathTracerPrimaryParams must remain 16-byte aligned");
@@ -86,9 +91,11 @@ static_assert(alignof(PathTracerSampleOutput) == 16u,
 PathTracerRay pathTracerPrimaryRay(const PathTracerCameraData &camera, const PathTracerPrimaryParams &params,
 								   uint32_t pixelIndex);
 
-/** Copy cumulative GPU sample outputs into the CPU accumulation layout. */
+/** Copy cumulative GPU sample outputs into the CPU accumulation layout. Returns
+ * the maximum per-pixel sample count (the global pass count) and writes each
+ * pixel's own count into @p sampleCounts; returns 0 if any count is invalid. */
 uint32_t pathTracerCopySampleOutputs(const PathTracerSampleOutput *outputs, uint32_t pixelCount, float *rgba,
 									 float *albedo, float *normal, float *depth, float *luminanceSquared,
-									 float *feature);
+									 float *feature, int *sampleCounts);
 
 } // namespace voxelpathtracer

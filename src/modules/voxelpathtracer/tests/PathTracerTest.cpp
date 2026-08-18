@@ -137,7 +137,7 @@ TEST_F(PathTracerTest, testPortableCameraRayMatchesEditorCamera) {
 	EXPECT_EQ(80u, sizeof(voxelpathtracer::PathTracerCameraData));
 	EXPECT_EQ(16u, alignof(voxelpathtracer::PathTracerCameraData));
 	EXPECT_EQ(64u, offsetof(voxelpathtracer::PathTracerCameraData, viewport));
-	EXPECT_EQ(16u, sizeof(voxelpathtracer::PathTracerPrimaryParams));
+	EXPECT_EQ(32u, sizeof(voxelpathtracer::PathTracerPrimaryParams));
 	EXPECT_EQ(16u, alignof(voxelpathtracer::PathTracerPrimaryParams));
 	video::Camera camera;
 	camera.setSize(glm::ivec2(80, 40));
@@ -360,8 +360,9 @@ TEST_F(PathTracerTest, testPortableWebGPUAccumulationCopy) {
 	float depth[2] = {0.0f};
 	float luminanceSquared[2] = {0.0f};
 	float feature[2] = {0.0f};
+	int sampleCounts[2] = {0};
 	EXPECT_EQ(4u, pathTracerCopySampleOutputs(outputs, 2u, rgba, albedo, normal, depth, luminanceSquared,
-		feature));
+		feature, sampleCounts));
 	EXPECT_FLOAT_EQ(1.0f, rgba[0]);
 	EXPECT_FLOAT_EQ(2.0f, rgba[4]);
 	EXPECT_FLOAT_EQ(0.3f, albedo[1]);
@@ -369,13 +370,24 @@ TEST_F(PathTracerTest, testPortableWebGPUAccumulationCopy) {
 	EXPECT_FLOAT_EQ(6.0f, depth[1]);
 	EXPECT_FLOAT_EQ(7.0f, luminanceSquared[1]);
 	EXPECT_FLOAT_EQ(0.7f, feature[1]);
+	EXPECT_EQ(4, sampleCounts[0]);
+	EXPECT_EQ(4, sampleCounts[1]);
+	// Adaptive sampling allows per-pixel counts to differ; the maximum is the
+	// global pass count and each pixel's own count is preserved.
 	outputs[1].moments.y = 3.0f;
-	EXPECT_EQ(0u, pathTracerCopySampleOutputs(outputs, 2u, rgba, albedo, normal, depth, luminanceSquared,
-		feature));
+	EXPECT_EQ(4u, pathTracerCopySampleOutputs(outputs, 2u, rgba, albedo, normal, depth, luminanceSquared,
+		feature, sampleCounts));
+	EXPECT_EQ(4, sampleCounts[0]);
+	EXPECT_EQ(3, sampleCounts[1]);
+	// A zero count and a non-finite count are still rejected as invalid.
 	outputs[0].moments.y = 0.0f;
 	outputs[1].moments.y = 0.0f;
 	EXPECT_EQ(0u, pathTracerCopySampleOutputs(outputs, 2u, rgba, albedo, normal, depth, luminanceSquared,
-		feature));
+		feature, sampleCounts));
+	outputs[0].moments.y = 4.0f;
+	outputs[1].moments.y = glm::sqrt(-1.0f); // NaN
+	EXPECT_EQ(0u, pathTracerCopySampleOutputs(outputs, 2u, rgba, albedo, normal, depth, luminanceSquared,
+		feature, sampleCounts));
 }
 
 TEST_F(PathTracerTest, testWGSLTraversalABIContract) {
@@ -446,7 +458,13 @@ TEST_F(PathTracerTest, testWGSLTraversalABIContract) {
 	EXPECT_TRUE(source.contains("previousEnvironmentPdf = environmentPdf(incoming);"));
 	// Item 4: unbiased Russian roulette replaces the hard throughput cutoff.
 	EXPECT_TRUE(source.contains("let survival = max(throughputMax, 1.0e-4)"));
-	}
+	// Item 3: adaptive sampling convergence predicate and per-pixel early stop.
+	EXPECT_TRUE(source.contains("adaptiveEnabled: u32"));
+	EXPECT_TRUE(source.contains("adaptiveError: f32"));
+	EXPECT_TRUE(source.contains("adaptiveMinSamples: u32"));
+	EXPECT_TRUE(source.contains("fn pixelConverged"));
+	EXPECT_TRUE(source.contains("primaryParams.adaptiveEnabled != 0u"));
+}
 
 TEST_F(PathTracerTest, testWebGPUBackendLifecycleContract) {
 	using namespace voxelpathtracer;
@@ -921,6 +939,78 @@ TEST_F(PathTracerTest, testVoxelDDAMidGrayUsesLinearLightingOnce) {
 	EXPECT_GT(luma, 100) << "luma=" << luma;
 	EXPECT_LT(luma, 160) << "luma=" << luma;
 	ASSERT_TRUE(tracer.stop());
+}
+
+// Renders a large flat diffuse wall that fills the frame and returns the center
+// pixel luma plus the final sample count. Used to prove adaptive sampling stops
+// a converged scene early and still matches the full-sample mean.
+static int flatWallCenterLuma(bool adaptive, int samples, int &finalSample) {
+	scenegraph::SceneGraph sceneGraph;
+	scenegraph::SceneGraphNode modelNode(scenegraph::SceneGraphNodeType::Model);
+	voxel::RawVolume *v = new voxel::RawVolume(voxel::Region(0, 0, 0, 15, 15, 0));
+	for (int y = 0; y < 16; ++y) {
+		for (int x = 0; x < 16; ++x) {
+			v->setVoxel(x, y, 0, voxel::createVoxel(voxel::VoxelType::Generic, 1));
+		}
+	}
+	palette::Palette pal;
+	pal.nippon();
+	pal.setColor(1, color::RGBA(128, 128, 128, 255));
+	pal.setRoughness(1, 1.0f);
+	pal.setSpecular(1, 0.0f);
+	modelNode.setPalette(pal);
+	modelNode.setVolume(v);
+	sceneGraph.emplace(core::move(modelNode));
+
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(8.0f, 8.0f, 6.0f));
+	cam.lookAt(glm::vec3(8.0f, 8.0f, 0.0f));
+	cam.update(0.0);
+
+	voxelpathtracer::VoxelDDAPathTracer tracer;
+	tracer.state().params.resolution = 64;
+	tracer.state().params.samples = samples;
+	tracer.state().params.batch = 8;
+	tracer.state().params.bounces = 1;
+	tracer.state().params.adaptive = adaptive;
+	tracer.state().params.adaptiveError = 0.02f;
+	if (!tracer.start(sceneGraph, &cam)) {
+		return -1;
+	}
+	while (!tracer.update(&finalSample)) {
+	}
+	const image::ImagePtr img = tracer.image();
+	if (!img || !img->isLoaded()) {
+		return -1;
+	}
+	const color::RGBA c = img->colorAt(img->width() / 2, img->height() / 2);
+	tracer.stop();
+	return ((int)c.r + (int)c.g + (int)c.b) / 3;
+}
+
+TEST_F(PathTracerTest, testVoxelDDAAdaptiveSamplingStopsFlatSceneEarly) {
+	int finalSample = 0;
+	const int luma = flatWallCenterLuma(true, 512, finalSample);
+	// A constant flat wall converges to the same radiance everywhere, so every
+	// pixel reaches the relative-error floor after the minimum sample count and
+	// the render terminates well before the 512-sample safety cap.
+	EXPECT_GE(finalSample, 16) << "stopped before the minimum sample floor";
+	EXPECT_LT(finalSample, 128) << "adaptive sampling did not stop early (sample=" << finalSample << ")";
+	EXPECT_GT(luma, 60) << "flat wall should be lit, luma=" << luma;
+}
+
+TEST_F(PathTracerTest, testVoxelDDAAdaptiveSamplingMatchesFullSampling) {
+	int adaptiveSample = 0;
+	const int adaptiveLuma = flatWallCenterLuma(true, 256, adaptiveSample);
+	int fullSample = 0;
+	const int fullLuma = flatWallCenterLuma(false, 256, fullSample);
+	ASSERT_GE(adaptiveLuma, 0);
+	ASSERT_GE(fullLuma, 0);
+	// Adaptive sampling stops far earlier than the full budget...
+	EXPECT_LT(adaptiveSample, fullSample);
+	// ...yet the converged flat-wall mean matches the full render closely.
+	EXPECT_NEAR(fullLuma, adaptiveLuma, 8.0f) << "adaptive=" << adaptiveLuma << " full=" << fullLuma;
 }
 
 static int neighborMad(const image::ImagePtr &img) {

@@ -64,6 +64,7 @@ private:
 	core::Buffer<float> _accumDepth;
 	core::Buffer<float> _accumLuma2;
 	core::Buffer<float> _accumFeature;
+	core::Buffer<int> _accumCount;
 	int _width = 0;
 	int _height = 0;
 	int _sample = 0;
@@ -116,6 +117,11 @@ private:
 						float &guideFeature) const;
 	void accumulateSample();
 	void denoiseColor(float *rgb) const;
+	// Adaptive sampling: true once the relative standard error of this pixel's
+	// accumulated luminance mean is below the adaptiveError tolerance. Uses
+	// _accumCount/_accum/_accumLuma2; mirrors the WGSL convergence predicate.
+	bool pixelConverged(int p) const;
+	bool allPixelsConverged() const;
 
 public:
 	VoxelDDAPathTracer();

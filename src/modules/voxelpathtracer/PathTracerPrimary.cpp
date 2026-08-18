@@ -24,20 +24,29 @@ PathTracerRay pathTracerPrimaryRay(const PathTracerCameraData &camera, const Pat
 
 uint32_t pathTracerCopySampleOutputs(const PathTracerSampleOutput *outputs, uint32_t pixelCount, float *rgba,
 									 float *albedo, float *normal, float *depth, float *luminanceSquared,
-									 float *feature) {
+									 float *feature, int *sampleCounts) {
 	if (outputs == nullptr || pixelCount == 0u || rgba == nullptr || albedo == nullptr || normal == nullptr ||
-		depth == nullptr || luminanceSquared == nullptr || feature == nullptr) {
+		depth == nullptr || luminanceSquared == nullptr || feature == nullptr || sampleCounts == nullptr) {
 		return 0u;
 	}
-	const float sampleValue = outputs[0].moments.y;
-	if (sampleValue < 0.5f || sampleValue > 4294967040.0f) {
-		return 0u;
-	}
-	const uint32_t sampleCount = static_cast<uint32_t>(sampleValue + 0.5f);
+	// Adaptive sampling lets each pixel stop at its own count, so moments.y is
+	// no longer required to be uniform. Validate every count is finite, integral,
+	// and in range; the maximum is the global pass count used for the next batch.
+	uint32_t maxCount = 0u;
 	for (uint32_t i = 0u; i < pixelCount; ++i) {
-		if (glm::abs(outputs[i].moments.y - sampleValue) > 0.01f) {
+		const float countValue = outputs[i].moments.y;
+		if (!(countValue >= 0.0f) || countValue > 4294967040.0f) {
 			return 0u;
 		}
+		const uint32_t rounded = static_cast<uint32_t>(countValue + 0.5f);
+		if (glm::abs(countValue - static_cast<float>(rounded)) > 0.01f) {
+			return 0u;
+		}
+		sampleCounts[i] = static_cast<int>(rounded);
+		maxCount = rounded > maxCount ? rounded : maxCount;
+	}
+	if (maxCount == 0u) {
+		return 0u;
 	}
 	for (uint32_t i = 0u; i < pixelCount; ++i) {
 		const PathTracerSampleOutput &output = outputs[i];
@@ -55,7 +64,7 @@ uint32_t pathTracerCopySampleOutputs(const PathTracerSampleOutput *outputs, uint
 		luminanceSquared[i] = output.moments.x;
 		feature[i] = output.albedoFeature.w;
 	}
-	return sampleCount;
+	return maxCount;
 }
 
 } // namespace voxelpathtracer

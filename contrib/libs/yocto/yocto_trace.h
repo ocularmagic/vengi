@@ -110,6 +110,11 @@ struct trace_params {
   int                   pratio         = 8;
   bool                  denoise        = false;
   int                   batch          = 1;
+  // Voxel DDA adaptive sampling: stop a pixel once the relative standard error
+  // of its accumulated luminance mean drops below adaptiveError (after the
+  // minimum sample floor). samples stays the safety cap, not the goal.
+  bool                  adaptive       = false;
+  float                 adaptiveError  = 0.02f;
 };
 
 // Progressively computes an image.
