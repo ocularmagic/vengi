@@ -1709,6 +1709,8 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 				applyBackendEvent(PathTracerWebGPUEvent::ResourceExhausted);
 			} else if (jsMessage.contains("readback")) {
 				applyBackendEvent(PathTracerWebGPUEvent::ReadbackFailed);
+			} else if (jsMessage.contains("dispatch")) {
+				applyBackendEvent(PathTracerWebGPUEvent::DispatchRejected);
 			} else {
 				applyBackendEvent(PathTracerWebGPUEvent::RecoverFailed);
 			}
