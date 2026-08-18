@@ -1333,6 +1333,76 @@
 			expect(!denoiseValidationError, denoiseValidationError
 				? denoiseValidationError.message : 'denoise validation error');
 
+			// Adaptive-sampling convergence flag (step 3): a separate pass counts
+			// still-unconverged pixels into one 4-byte atomic, so the driver can
+			// stop from a single read instead of the full per-pixel moments.
+			device.pushErrorScope('validation');
+			const convergencePipeline = await device.createComputePipelineAsync({
+				label: 'voxel convergence flag',
+				layout: 'auto',
+				compute: {module, entryPoint: 'convergenceMain'}
+			});
+			const convergencePixels = 4;
+			const convergenceParamsBuffer = uploadBuffer(device,
+				primaryParamsBytes(convergencePixels, 0, 1, 0, 1, 0.1, 16),
+				GPUBufferUsage.UNIFORM, 'convergence params');
+			const unconvergedBuffer = device.createBuffer({
+				label: 'unconverged count', size: 4,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+			});
+			const convergenceReadback = device.createBuffer({
+				label: 'convergence readback', size: 4,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+			});
+			const runConvergence = async outputsBuffer => {
+				device.queue.writeBuffer(unconvergedBuffer, 0, new Uint32Array([0]));
+				const bindGroup = device.createBindGroup({
+					layout: convergencePipeline.getBindGroupLayout(0),
+					entries: [
+						{binding: 0, resource: {buffer: outputsBuffer}},
+						{binding: 1, resource: {buffer: convergenceParamsBuffer}},
+						{binding: 2, resource: {buffer: unconvergedBuffer}}
+					]
+				});
+				const encoder = device.createCommandEncoder();
+				const pass = encoder.beginComputePass();
+				pass.setPipeline(convergencePipeline);
+				pass.setBindGroup(0, bindGroup);
+				pass.dispatchWorkgroups(1);
+				pass.end();
+				encoder.copyBufferToBuffer(unconvergedBuffer, 0, convergenceReadback, 0, 4);
+				device.queue.submit([encoder.finish()]);
+				await convergenceReadback.mapAsync(GPUMapMode.READ);
+				const count = new Uint32Array(convergenceReadback.getMappedRange().slice(0))[0];
+				convergenceReadback.unmap();
+				return count;
+			};
+			// A fresh (zero-count) buffer is entirely unconverged.
+			const freshOutputs = device.createBuffer({
+				label: 'fresh convergence outputs', size: 96 * convergencePixels,
+				usage: storage | GPUBufferUsage.COPY_DST
+			});
+			device.queue.writeBuffer(freshOutputs, 0, new Uint8Array(96 * convergencePixels));
+			expect(await runConvergence(freshOutputs) === convergencePixels,
+				'convergence flag must count every fresh pixel');
+			// A converged buffer (count >= floor, zero variance) counts zero pixels.
+			const convergedOutputs = device.createBuffer({
+				label: 'converged outputs', size: 96 * convergencePixels,
+				usage: storage | GPUBufferUsage.COPY_DST
+			});
+			const convergedData = new ArrayBuffer(96 * convergencePixels);
+			const convergedView = new DataView(convergedData);
+			for (let i = 0; i < convergencePixels; ++i) {
+				writeVec4(convergedView, i * 96, [8.0, 8.0, 8.0, 16.0], 'setFloat32');
+				writeVec4(convergedView, i * 96 + 80, [4.0, 16.0, 0.0, 0.0], 'setFloat32');
+			}
+			device.queue.writeBuffer(convergedOutputs, 0, convergedData);
+			expect(await runConvergence(convergedOutputs) === 0,
+				'convergence flag must reach zero for a converged image');
+			const convergenceValidationError = await device.popErrorScope();
+			expect(!convergenceValidationError, convergenceValidationError
+				? convergenceValidationError.message : 'convergence validation error');
+
 			const destroyDevice = async gpuDevice => {
 				const lost = gpuDevice.lost.catch(() => {});
 				gpuDevice.destroy();
@@ -1591,7 +1661,8 @@
 				'4/4 traversal, 4/4 primary-ray, 4/4 shading/AOV, 4/4 accumulation, ' +
 				'4/4 adaptive-sampling early stop, 1/1 multi-bounce, 1/1 emitter sampling, ' +
 				'2/2 transparent transport, 1/1 ground, 1/1 media, 1/1 HDRI, ' +
-				'2/2 denoise tonemap lock-step, 2/2 denoise temporal seed + blend, 2/2 64-sample 8-bounce second-start, ' +
+				'2/2 denoise tonemap lock-step, 2/2 denoise temporal seed + blend, 1/1 convergence flag, ' +
+				'2/2 64-sample 8-bounce second-start, ' +
 				'and 1/1 mid-render device-loss recovery cases passed';
 		}
 
