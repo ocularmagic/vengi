@@ -1198,15 +1198,38 @@
 				}
 				return data;
 			};
-			const makeDenoiseParams = (mode, step, exposure, filmic) => {
+			const makeDenoiseParams = (mode, step, exposure, filmic, seed = 0) => {
 				const data = new ArrayBuffer(48);
 				const view = new DataView(data);
 				writeVec4(view, 0, [denoiseWidth, denoiseHeight, 0, 0], 'setUint32');
 				writeVec4(view, 16, [exposure, 0, 0, 0], 'setFloat32');
-				writeVec4(view, 32, [mode, step, filmic, 0], 'setUint32');
+				writeVec4(view, 32, [mode, step, filmic, seed], 'setUint32');
 				return data;
 			};
-			const runDenoise = async (radiance, exposure, filmic) => {
+			// Static-camera temporal setup: identity inverseViewProjection and an
+			// identity previous view-projection so the reprojection round-trips a
+			// pixel to itself (the common case during accumulation).
+			const makeTemporalCamera = () => {
+				const data = new ArrayBuffer(80);
+				const view = new DataView(data);
+				writeIdentity(view, 0);
+				writeVec4(view, 64, [denoiseWidth, denoiseHeight, 1 / denoiseWidth, 1 / denoiseHeight], 'setFloat32');
+				return data;
+			};
+			const makePrevVP = () => {
+				const data = new ArrayBuffer(64);
+				const view = new DataView(data);
+				writeIdentity(view, 0);
+				return data;
+			};
+			// Persistent temporal double-buffers, swapped across frames.
+			const historySize = denoisePixels * 64;
+			const historyUsage = storage | GPUBufferUsage.COPY_DST;
+			const historyA = device.createBuffer({label: 'temporal history A', size: historySize, usage: historyUsage});
+			const historyB = device.createBuffer({label: 'temporal history B', size: historySize, usage: historyUsage});
+			device.queue.writeBuffer(historyA, 0, new Uint8Array(historySize));
+			device.queue.writeBuffer(historyB, 0, new Uint8Array(historySize));
+			const runDenoise = async (radiance, exposure, filmic, temporal = null) => {
 				const denoiseOutputsBuffer = uploadBuffer(device, makeDenoiseOutputs(radiance),
 					storage, 'denoise outputs');
 				const scratchSize = denoisePixels * 16;
@@ -1224,6 +1247,10 @@
 					label: 'denoise params', size: 48,
 					usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 				});
+				const camera = uploadBuffer(device, makeTemporalCamera(), GPUBufferUsage.UNIFORM, 'denoise camera');
+				const prevVP = uploadBuffer(device, makePrevVP(), GPUBufferUsage.UNIFORM, 'denoise previous vp');
+				const historyIn = temporal ? temporal.historyIn : historyA;
+				const historyOut = temporal ? temporal.historyOut : historyB;
 				const makeBindGroup = (ping, pong) => device.createBindGroup({
 					layout: denoisePipeline.getBindGroupLayout(0),
 					entries: [
@@ -1231,11 +1258,15 @@
 						{binding: 1, resource: {buffer: ping}},
 						{binding: 2, resource: {buffer: pong}},
 						{binding: 3, resource: {buffer: params}},
-						{binding: 4, resource: {buffer: finalImageBuffer}}
+						{binding: 4, resource: {buffer: finalImageBuffer}},
+						{binding: 5, resource: {buffer: camera}},
+						{binding: 6, resource: {buffer: prevVP}},
+						{binding: 7, resource: {buffer: historyIn}},
+						{binding: 8, resource: {buffer: historyOut}}
 					]
 				});
-				const dispatch = (mode, step, ping, pong) => {
-					device.queue.writeBuffer(params, 0, makeDenoiseParams(mode, step, exposure, filmic));
+				const dispatch = (mode, step, ping, pong, seed = 0) => {
+					device.queue.writeBuffer(params, 0, makeDenoiseParams(mode, step, exposure, filmic, seed));
 					const encoder = device.createCommandEncoder();
 					const pass = encoder.beginComputePass();
 					pass.setPipeline(denoisePipeline);
@@ -1248,7 +1279,11 @@
 				dispatch(1, 1, scratchA, scratchB); // pass 1 -> scratchB
 				dispatch(1, 2, scratchB, scratchA); // pass 2 -> scratchA
 				dispatch(1, 4, scratchA, scratchB); // pass 3 -> scratchB
-				dispatch(2, 0, scratchB, scratchA); // tonemap <- scratchB
+				const finalScratch = temporal ? scratchA : scratchB;
+				if (temporal) {
+					dispatch(3, 0, scratchB, scratchA, temporal.seed ? 1 : 0); // temporal -> scratchA
+				}
+				dispatch(2, 0, finalScratch, finalScratch === scratchA ? scratchB : scratchA); // tonemap
 				const finalReadback = device.createBuffer({
 					label: 'final readback', size: denoisePixels * 4,
 					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
@@ -1282,6 +1317,18 @@
 			};
 			verifyDenoise(await runDenoise([0.5, 0.5, 0.5], 0, 0), [0.5, 0.5, 0.5], 0, 0, 'denoise default');
 			verifyDenoise(await runDenoise([0.7, 0.3, 0.2], 1, 1), [0.7, 0.3, 0.2], 1, 1, 'denoise filmic');
+			// Temporal seed is identity: the seeded output equals the spatial result.
+			verifyDenoise(await runDenoise([0.5, 0.5, 0.5], 0, 0,
+				{seed: 1, historyIn: historyA, historyOut: historyB}),
+				[0.5, 0.5, 0.5], 0, 0, 'denoise temporal seed');
+			// Temporal blend: seed history at 0.5, then blend a 0.7 frame with a
+			// static camera. newCount = 2, temporalAlpha = 1/3, so the blended
+			// radiance is 0.5*(2/3) + 0.7*(1/3).
+			await runDenoise([0.5, 0.5, 0.5], 0, 0, {seed: 1, historyIn: historyA, historyOut: historyB});
+			const blendView = await runDenoise([0.7, 0.7, 0.7], 0, 0,
+				{seed: 0, historyIn: historyB, historyOut: historyA});
+			const blend = 0.5 * (2 / 3) + 0.7 * (1 / 3);
+			verifyDenoise(blendView, [blend, blend, blend], 0, 0, 'denoise temporal blend');
 			const denoiseValidationError = await device.popErrorScope();
 			expect(!denoiseValidationError, denoiseValidationError
 				? denoiseValidationError.message : 'denoise validation error');
@@ -1544,7 +1591,7 @@
 				'4/4 traversal, 4/4 primary-ray, 4/4 shading/AOV, 4/4 accumulation, ' +
 				'4/4 adaptive-sampling early stop, 1/1 multi-bounce, 1/1 emitter sampling, ' +
 				'2/2 transparent transport, 1/1 ground, 1/1 media, 1/1 HDRI, ' +
-				'2/2 denoise tonemap lock-step, 2/2 64-sample 8-bounce second-start, ' +
+				'2/2 denoise tonemap lock-step, 2/2 denoise temporal seed + blend, 2/2 64-sample 8-bounce second-start, ' +
 				'and 1/1 mid-render device-loss recovery cases passed';
 		}
 
