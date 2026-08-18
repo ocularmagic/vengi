@@ -82,7 +82,12 @@ private:
 	bool _hasMedia = false;
 #ifdef __EMSCRIPTEN__
 	PathTracerWebGPU _webGPU;
-	core::Buffer<PathTracerSampleOutput> _webGPUOutputs;
+	// Cached GPU-denoiser output (packed RGBA8) produced by the last renderBatch,
+	// returned directly by image(). Reset on restart.
+	core::Buffer<uint8_t> _webGPUImage;
+	uint32_t _webGPUBatchSamples = 0u;
+	bool _webGPUConverged = false;
+	bool _webGPUDenoiseSeeded = false;
 	bool _webGPUScenePending = false;
 	bool _webGPUEnvironmentPending = false;
 	bool _webGPUEnabled = false;

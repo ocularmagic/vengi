@@ -5,6 +5,7 @@
 #include "PathTracerWebGPU.h"
 #include "PathTracerTraversalWGSL.h"
 #include <string.h>
+#include <glm/gtc/matrix_inverse.hpp>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -48,12 +49,16 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		dropBuffers(record) {
 			for (const name of ['grids', 'cells', 'materials', 'emitters', 'ground', 'environmentTexels',
 				'environmentCdf', 'environmentData', 'mediaData', 'rays', 'hits', 'params', 'camera',
-				'primaryParams', 'lighting', 'sampleOutputs', 'readback', 'sampleReadback']) {
+				'primaryParams', 'lighting', 'sampleOutputs', 'readback', 'sampleReadback',
+				'denoiseScratchA', 'denoiseScratchB', 'temporalHistoryA', 'temporalHistoryB',
+				'finalImage', 'denoiseParams', 'denoiseCamera', 'denoisePreviousVP',
+				'unconvergedCount', 'finalReadback', 'convergenceReadback']) {
 				this.destroyBuffer(record, name);
 			}
 			record.gridCount = 0;
 			record.emitterCount = 0;
 			record.samplePixelCount = 0;
+			record.temporalParity = 0;
 		},
 		fail(record, message) {
 			record.state = 3;
@@ -97,6 +102,16 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 				layout: 'auto',
 				compute: {module, entryPoint: 'primaryMain'}
 			});
+			record.convergencePipeline = await device.createComputePipelineAsync({
+				label: 'voxel convergence flag',
+				layout: 'auto',
+				compute: {module, entryPoint: 'convergenceMain'}
+			});
+			record.denoisePipeline = await device.createComputePipelineAsync({
+				label: 'voxel denoise tonemap',
+				layout: 'auto',
+				compute: {module, entryPoint: 'denoiseMain'}
+			});
 		},
 		async recover(record) {
 			if (record.destroyed) {
@@ -109,6 +124,8 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 			this.dropBuffers(record);
 			record.pipeline = null;
 			record.primaryPipeline = null;
+			record.convergencePipeline = null;
+			record.denoisePipeline = null;
 			if (record.device) {
 				const lost = Promise.resolve(record.device.lost).catch(() => {});
 				try {
@@ -161,6 +178,8 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		device: null,
 		pipeline: null,
 		primaryPipeline: null,
+		convergencePipeline: null,
+		denoisePipeline: null,
 		grids: null,
 		cells: null,
 		materials: null,
@@ -186,8 +205,11 @@ EM_JS(int, vengiPathTracerWebGPUCreate, (const char *sourcePointer, uint32_t sou
 		busy: false,
 		result: null,
 		sampleResult: null,
+		denoiseResult: null,
+		convergenceResult: 0,
 		resultRayCount: 0,
 		samplePixelCount: 0,
+		temporalParity: 0,
 		source: "",
 		recoveries: 0,
 		maxRecoveries: 1,
@@ -608,6 +630,229 @@ EM_JS(int, vengiPathTracerWebGPUTakePrimaryOutputs,
 	return count;
 });
 
+EM_JS(int, vengiPathTracerWebGPURenderBatch,
+	  (int handle, const void *cameraPointer, const void *paramsPointer,
+	   const void *lightingPointer, uint32_t sampleCount, uint32_t width, uint32_t height,
+	   float exposure, int filmic, int seed, const void *previousVPPointer), {
+	const runtime = Module.vengiPathTracerWebGPU;
+	const record = runtime ? runtime.backends.get(handle) : null;
+	if (!record || record.state !== 2 || record.busy || record.result || record.sampleResult ||
+		record.gridCount === 0 || sampleCount === 0 || width === 0 || height === 0) {
+		return 0;
+	}
+	try {
+		const pixelCount = width * height;
+		const outputBytes = pixelCount * 96;
+		const scratchBytes = pixelCount * 16;
+		const historyBytes = pixelCount * 64;
+		const imageBytes = pixelCount * 4;
+		const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+
+		// Accumulation buffers: sampleOutputs, camera, strided primary params,
+		// and lighting.
+		const paramsBytes = HEAPU8.slice(paramsPointer, paramsPointer + 32);
+		const baseParams = new Uint32Array(paramsBytes.buffer, paramsBytes.byteOffset, 8);
+		const sampleIndex = baseParams[1];
+		runtime.ensureBuffer(record, 'hits', outputBytes, GPUBufferUsage.STORAGE, 'path tracer primary hits');
+		const camera = runtime.ensureBuffer(record, 'camera', 80,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'path tracer camera');
+		record.device.queue.writeBuffer(camera, 0, HEAPU8.slice(cameraPointer, cameraPointer + 80));
+		const uniformStride = 256;
+		const primaryParams = runtime.ensureBuffer(record, 'primaryParams', uniformStride * sampleCount,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'path tracer primary params');
+		for (let sampleOffset = 0; sampleOffset < sampleCount; ++sampleOffset) {
+			const sampleParams = new Uint32Array(baseParams);
+			sampleParams[1] = sampleIndex + sampleOffset;
+			record.device.queue.writeBuffer(primaryParams, uniformStride * sampleOffset, sampleParams);
+		}
+		const lighting = runtime.ensureBuffer(record, 'lighting', 64,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'path tracer lighting');
+		record.device.queue.writeBuffer(lighting, 0, HEAPU8.slice(lightingPointer, lightingPointer + 64));
+		if (!record.sampleOutputs || record.samplePixelCount !== pixelCount) {
+			runtime.ensureBuffer(record, 'sampleOutputs', outputBytes,
+				GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+				'path tracer accumulated outputs');
+			record.device.queue.writeBuffer(record.sampleOutputs, 0, new Uint8Array(outputBytes));
+			record.samplePixelCount = pixelCount;
+		} else if (sampleIndex === 0) {
+			record.device.queue.writeBuffer(record.sampleOutputs, 0, new Uint8Array(outputBytes));
+		}
+
+		// Denoise + convergence buffers.
+		const scratchA = runtime.ensureBuffer(record, 'denoiseScratchA', scratchBytes, storage, 'denoise scratch A');
+		const scratchB = runtime.ensureBuffer(record, 'denoiseScratchB', scratchBytes, storage, 'denoise scratch B');
+		const historyA = runtime.ensureBuffer(record, 'temporalHistoryA', historyBytes, storage, 'temporal history A');
+		const historyB = runtime.ensureBuffer(record, 'temporalHistoryB', historyBytes, storage, 'temporal history B');
+		const finalImage = runtime.ensureBuffer(record, 'finalImage', imageBytes,
+			GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, 'final image');
+		const denoiseParams = runtime.ensureBuffer(record, 'denoiseParams', 48,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'denoise params');
+		const denoiseCamera = runtime.ensureBuffer(record, 'denoiseCamera', 80,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'denoise camera');
+		const denoisePreviousVP = runtime.ensureBuffer(record, 'denoisePreviousVP', 64,
+			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'denoise previous vp');
+		const unconvergedCount = runtime.ensureBuffer(record, 'unconvergedCount', 4,
+			GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, 'unconverged count');
+		const finalReadback = runtime.ensureBuffer(record, 'finalReadback', imageBytes,
+			GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, 'final image readback');
+		const convergenceReadback = runtime.ensureBuffer(record, 'convergenceReadback', 4,
+			GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, 'convergence readback');
+
+		record.device.queue.writeBuffer(denoiseCamera, 0, HEAPU8.slice(cameraPointer, cameraPointer + 80));
+		record.device.queue.writeBuffer(denoisePreviousVP, 0,
+			HEAPU8.slice(previousVPPointer, previousVPPointer + 64));
+		record.device.queue.writeBuffer(unconvergedCount, 0, new Uint32Array([0]));
+
+		const writeDenoiseParams = (mode, step, seedFlag) => {
+			const data = new ArrayBuffer(48);
+			const view = new DataView(data);
+			view.setUint32(0, width, true);
+			view.setUint32(4, height, true);
+			view.setFloat32(16, exposure, true);
+			view.setUint32(32, mode, true);
+			view.setUint32(36, step, true);
+			view.setUint32(40, filmic, true);
+			view.setUint32(44, seedFlag, true);
+			record.device.queue.writeBuffer(denoiseParams, 0, data);
+		};
+
+		const parity = record.temporalParity || 0;
+		const historyIn = parity === 0 ? historyA : historyB;
+		const historyOut = parity === 0 ? historyB : historyA;
+		record.temporalParity = parity === 0 ? 1 : 0;
+
+		const encoder = record.device.createCommandEncoder();
+
+		// 1. Accumulate sampleCount samples (primaryMain).
+		for (let sampleOffset = 0; sampleOffset < sampleCount; ++sampleOffset) {
+			const bindGroup = record.device.createBindGroup({
+				layout: record.primaryPipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: record.grids}},
+					{binding: 1, resource: {buffer: record.cells}},
+					{binding: 2, resource: {buffer: record.materials}},
+					{binding: 4, resource: {buffer: record.hits}},
+					{binding: 6, resource: {buffer: camera}},
+					{binding: 7, resource: {buffer: primaryParams, offset: uniformStride * sampleOffset, size: 32}},
+					{binding: 8, resource: {buffer: lighting}},
+					{binding: 9, resource: {buffer: record.sampleOutputs}},
+					{binding: 10, resource: {buffer: record.emitters}},
+					{binding: 11, resource: {buffer: record.ground}},
+					{binding: 12, resource: {buffer: record.environmentTexels}},
+					{binding: 13, resource: {buffer: record.environmentCdf}},
+					{binding: 14, resource: {buffer: record.environmentData}},
+					{binding: 15, resource: {buffer: record.mediaData}}
+				]
+			});
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(record.primaryPipeline);
+			pass.setBindGroup(0, bindGroup);
+			pass.dispatchWorkgroups(Math.ceil(pixelCount / 64));
+			pass.end();
+		}
+
+		// 2. Count still-unconverged pixels (convergenceMain).
+		{
+			const bindGroup = record.device.createBindGroup({
+				layout: record.convergencePipeline.getBindGroupLayout(0),
+				entries: [
+					{binding: 0, resource: {buffer: record.sampleOutputs}},
+					{binding: 1, resource: {buffer: primaryParams, size: 32}},
+					{binding: 2, resource: {buffer: unconvergedCount}}
+				]
+			});
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(record.convergencePipeline);
+			pass.setBindGroup(0, bindGroup);
+			pass.dispatchWorkgroups(Math.ceil(pixelCount / 64));
+			pass.end();
+		}
+
+		// 3. Denoise (denoiseMain: init + 3 a-trous + temporal + tonemap).
+		const denoiseBindGroup = (ping, pong) => record.device.createBindGroup({
+			layout: record.denoisePipeline.getBindGroupLayout(0),
+			entries: [
+				{binding: 0, resource: {buffer: record.sampleOutputs}},
+				{binding: 1, resource: {buffer: ping}},
+				{binding: 2, resource: {buffer: pong}},
+				{binding: 3, resource: {buffer: denoiseParams}},
+				{binding: 4, resource: {buffer: finalImage}},
+				{binding: 5, resource: {buffer: denoiseCamera}},
+				{binding: 6, resource: {buffer: denoisePreviousVP}},
+				{binding: 7, resource: {buffer: historyIn}},
+				{binding: 8, resource: {buffer: historyOut}}
+			]
+		});
+		const denoisePass = (mode, step, seedFlag, ping, pong) => {
+			writeDenoiseParams(mode, step, seedFlag);
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(record.denoisePipeline);
+			pass.setBindGroup(0, denoiseBindGroup(ping, pong));
+			pass.dispatchWorkgroups(Math.ceil(pixelCount / 64));
+			pass.end();
+		};
+		denoisePass(0, 0, 0, scratchB, scratchA); // init -> scratchA
+		denoisePass(1, 1, 0, scratchA, scratchB); // pass 1 -> scratchB
+		denoisePass(1, 2, 0, scratchB, scratchA); // pass 2 -> scratchA
+		denoisePass(1, 4, 0, scratchA, scratchB); // pass 3 -> scratchB
+		denoisePass(3, 0, seed, scratchB, scratchA); // temporal -> scratchA
+		denoisePass(2, 0, 0, scratchA, scratchB); // tonemap <- scratchA
+
+		// 4. Read back the packed image and the unconverged count.
+		encoder.copyBufferToBuffer(finalImage, 0, finalReadback, 0, imageBytes);
+		encoder.copyBufferToBuffer(unconvergedCount, 0, convergenceReadback, 0, 4);
+		record.device.queue.submit([encoder.finish()]);
+		record.busy = true;
+		Promise.all([finalReadback.mapAsync(GPUMapMode.READ), convergenceReadback.mapAsync(GPUMapMode.READ)])
+			.then(() => {
+				if (record.destroyed || record.state !== 2) {
+					return;
+				}
+				record.denoiseResult = new Uint8Array(finalReadback.getMappedRange()).slice();
+				record.convergenceResult =
+					new Uint32Array(convergenceReadback.getMappedRange().slice(0))[0];
+				finalReadback.unmap();
+				convergenceReadback.unmap();
+				record.resultRayCount = pixelCount;
+				record.busy = false;
+			}).catch(error => {
+				if (record.destroyed || record.state === 1) {
+					record.busy = false;
+					return;
+				}
+				runtime.fail(record, 'WebGPU readback failed; continuing on the CPU renderer');
+				console.error('Path tracer WebGPU batch readback failed:', error);
+			});
+		return 1;
+	} catch (error) {
+		runtime.fail(record, 'WebGPU dispatch was rejected; continuing on the CPU renderer');
+		console.error('Path tracer WebGPU batch dispatch failed:', error);
+		return 0;
+	}
+});
+
+EM_JS(int, vengiPathTracerWebGPUTakeBatch,
+	  (int handle, void *rgbaPointer, uint32_t capacity, void *unconvergedPointer), {
+	const runtime = Module.vengiPathTracerWebGPU;
+	const record = runtime ? runtime.backends.get(handle) : null;
+	if (!record || !record.denoiseResult) {
+		return 0;
+	}
+	const byteCount = record.resultRayCount * 4;
+	if (capacity < byteCount) {
+		return -record.resultRayCount;
+	}
+	HEAPU8.set(record.denoiseResult, rgbaPointer);
+	const countBytes = new Uint8Array(4);
+	new DataView(countBytes.buffer).setUint32(0, record.convergenceResult, true);
+	HEAPU8.set(countBytes, unconvergedPointer);
+	const count = record.resultRayCount;
+	record.denoiseResult = null;
+	record.convergenceResult = 0;
+	record.resultRayCount = 0;
+	return count;
+});
+
 EM_JS(int, vengiPathTracerWebGPUTakeResults,
 	  (int handle, void *hitPointer, uint32_t capacity), {
 	const runtime = Module.vengiPathTracerWebGPU;
@@ -896,6 +1141,44 @@ bool PathTracerWebGPU::takePrimaryOutputs(PathTracerSampleOutput *outputs, uint3
 	}
 #ifdef __EMSCRIPTEN__
 	const int result = vengiPathTracerWebGPUTakePrimaryOutputs(_handle, outputs, capacity);
+	if (result <= 0) {
+		return false;
+	}
+	pixelCount = static_cast<uint32_t>(result);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool PathTracerWebGPU::renderBatch(const PathTracerCameraData &camera, const PathTracerPrimaryParams &params,
+								   const PathTracerLightingData &lighting, uint32_t sampleCount, uint32_t width,
+								   uint32_t height, float exposure, bool filmic, bool seed) {
+	update();
+	if (!ready() || _gridCount == 0u || params.pixelCount == 0u || sampleCount == 0u || width == 0u ||
+		height == 0u) {
+		return false;
+	}
+#ifdef __EMSCRIPTEN__
+	PathTracerPrimaryParams dispatchParams = params;
+	dispatchParams.gridCount = _gridCount;
+	dispatchParams.emitterCount = _emitterCount;
+	const glm::mat4 previousVP = glm::inverse(camera.inverseViewProjection);
+	return vengiPathTracerWebGPURenderBatch(_handle, &camera, &dispatchParams, &lighting, sampleCount, width,
+											height, exposure, filmic ? 1 : 0, seed ? 1 : 0, &previousVP) != 0;
+#else
+	return false;
+#endif
+}
+
+bool PathTracerWebGPU::takeBatch(uint8_t *rgba, uint32_t capacity, uint32_t &pixelCount, uint32_t &unconverged) {
+	pixelCount = 0u;
+	unconverged = 0u;
+	if (!ready() || rgba == nullptr || capacity == 0u) {
+		return false;
+	}
+#ifdef __EMSCRIPTEN__
+	const int result = vengiPathTracerWebGPUTakeBatch(_handle, rgba, capacity, &unconverged);
 	if (result <= 0) {
 		return false;
 	}

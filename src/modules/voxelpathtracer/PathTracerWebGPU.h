@@ -103,6 +103,16 @@ public:
 	bool takePrimaryResults(PathTracerVoxelHit *hits, PathTracerSampleOutput *outputs, uint32_t capacity,
 							uint32_t &pixelCount);
 	bool takePrimaryOutputs(PathTracerSampleOutput *outputs, uint32_t capacity, uint32_t &pixelCount);
+	// One combined accumulation + denoise + convergence batch: dispatch
+	// primaryMain (sampleCount samples), convergenceMain (unconverged count),
+	// and denoiseMain (init + a-trous + temporal + tonemap), then read back the
+	// packed RGBA8 image and the 4-byte unconverged count. seed selects the
+	// temporal seed path. previousVP is derived from camera.
+	bool renderBatch(const PathTracerCameraData &camera, const PathTracerPrimaryParams &params,
+					 const PathTracerLightingData &lighting, uint32_t sampleCount, uint32_t width,
+					 uint32_t height, float exposure, bool filmic, bool seed);
+	// Retrieve the results of the last renderBatch. Returns false if none ready.
+	bool takeBatch(uint8_t *rgba, uint32_t capacity, uint32_t &pixelCount, uint32_t &unconverged);
 };
 
 } // namespace voxelpathtracer

@@ -1586,7 +1586,10 @@ bool VoxelDDAPathTracer::start(const scenegraph::SceneGraph &sceneGraph, const v
 	_accumCount.resize((size_t)_width * (size_t)_height);
 	core_memset(_accumCount.data(), 0, _accumCount.size() * sizeof(int));
 #ifdef __EMSCRIPTEN__
-	_webGPUOutputs.resize((size_t)_width * (size_t)_height);
+	_webGPUImage.resize((size_t)_width * (size_t)_height * 4u);
+	_webGPUConverged = false;
+	_webGPUDenoiseSeeded = false;
+	_webGPUBatchSamples = 0u;
 #endif
 	_sample = 0;
 	_temporalValid = false;
@@ -1696,30 +1699,28 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 		}
 		if (_webGPUEnabled && _webGPUDispatchPending) {
 			uint32_t pixelCount = 0u;
-			if (_webGPU.takePrimaryOutputs(_webGPUOutputs.data(), static_cast<uint32_t>(_webGPUOutputs.size()),
-					pixelCount)) {
+			uint32_t unconverged = 0u;
+			if (_webGPU.takeBatch(_webGPUImage.data(), static_cast<uint32_t>(_webGPUImage.size()),
+					pixelCount, unconverged)) {
 				const uint32_t expectedPixels = static_cast<uint32_t>(_width * _height);
-				const uint32_t completedSamples = pixelCount == expectedPixels ?
-					pathTracerCopySampleOutputs(_webGPUOutputs.data(), pixelCount, _accum.data(),
-						_accumAlbedo.data(), _accumNormal.data(), _accumDepth.data(), _accumLuma2.data(),
-						_accumFeature.data(), _accumCount.data()) : 0u;
-				if (completedSamples > 0u) {
+				if (pixelCount == expectedPixels) {
 					if (_sample == 0) {
 						Log::info("WebGPU path tracer active");
 					}
-					_sample = static_cast<int>(completedSamples);
+					_sample += static_cast<int>(_webGPUBatchSamples);
+					_webGPUConverged = unconverged == 0u;
+					_webGPUDenoiseSeeded = true;
 					_webGPUDispatchPending = false;
 					_webGPULifecycle.invalidRetry = false;
 				} else {
-					Log::warn("WebGPU returned invalid accumulation data at sample %i (moments.y=%f)",
-						_sample, _webGPUOutputs.empty() ? 0.0f : _webGPUOutputs[0].moments.y);
+					Log::warn("WebGPU returned invalid batch data at sample %i", _sample);
 					_webGPUDispatchPending = false;
 					applyBackendEvent(PathTracerWebGPUEvent::InvalidAccumulation);
 				}
 			}
 		}
 		if (_webGPUEnabled && !_webGPUScenePending && !_webGPUEnvironmentPending &&
-			!_webGPUDispatchPending && _sample < target && !allPixelsConverged()) {
+			!_webGPUDispatchPending && _sample < target && !_webGPUConverged) {
 			PathTracerPrimaryParams params;
 			params.pixelCount = static_cast<uint32_t>(_width * _height);
 			params.sampleIndex = static_cast<uint32_t>(_sample);
@@ -1728,7 +1729,10 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			params.adaptiveMinSamples = static_cast<uint32_t>(kAdaptiveMinSamples);
 			const uint32_t sampleCount = static_cast<uint32_t>(glm::min(batch, target - _sample));
 			const PathTracerLightingData lighting = webGPULightingData(_state, _envIsHdri);
-			if (_webGPU.dispatchPrimary(_cameraData, params, lighting, sampleCount, false)) {
+			if (_webGPU.renderBatch(_cameraData, params, lighting, sampleCount,
+					static_cast<uint32_t>(_width), static_cast<uint32_t>(_height), _state.exposure,
+					_state.filmic, !_webGPUDenoiseSeeded)) {
+				_webGPUBatchSamples = sampleCount;
 				_webGPUDispatchPending = true;
 			} else if (_webGPU.state() == PathTracerWebGPUState::Failed) {
 				const core::String &jsMessage = _webGPU.fallbackMessage();
@@ -1745,7 +1749,7 @@ bool VoxelDDAPathTracer::update(int *currentSample) {
 			if (currentSample) {
 				*currentSample = _sample;
 			}
-			if ((_sample >= target || allPixelsConverged()) && !_webGPUDispatchPending) {
+			if ((_sample >= target || _webGPUConverged) && !_webGPUDispatchPending) {
 				_state.started = false;
 				return true;
 			}
@@ -2045,6 +2049,16 @@ void VoxelDDAPathTracer::denoiseTemporal(float *rgb, const float *normal, const 
 }
 
 image::ImagePtr VoxelDDAPathTracer::image() {
+#ifdef __EMSCRIPTEN__
+	// The WebGPU backend denoises and tonemaps on the GPU; the cached RGBA8
+	// image is returned directly instead of re-running the CPU post-process.
+	if (_webGPUEnabled && !_webGPUImage.empty()) {
+		image::ImagePtr img = image::createEmptyImage("pathtracer");
+		if (img->loadRGBA(_webGPUImage.data(), _width, _height)) {
+			return img;
+		}
+	}
+#endif
 	if (_width <= 0 || _height <= 0 || _accum.empty()) {
 		return {};
 	}
