@@ -2,7 +2,8 @@ import { spawn } from 'child_process';
 import http from 'http';
 
 const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const url = 'http://127.0.0.1:8765/src/modules/voxelpathtracer/tests/webgpu/PathTracerTraversalWebGPU.html';
+const httpPort = process.env.VENGI_TEST_PORT || '8765';
+const url = `http://127.0.0.1:${httpPort}/src/modules/voxelpathtracer/tests/webgpu/PathTracerTraversalWebGPU.html`;
 const port = 9333;
 
 function getJson(path) {

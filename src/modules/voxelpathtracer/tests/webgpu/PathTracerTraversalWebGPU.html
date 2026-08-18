@@ -474,6 +474,31 @@
 			expect(litPixels > 0, 'environment-light samples produced no radiance');
 		}
 
+		// JS twin of the single output transform (PathTracerTonemap.h) so the
+		// WGSL denoiseTonemap can be checked in lock-step (formula-identical;
+		// last-ulp float differences are tolerated).
+		function pathTracerFilmic(linear) {
+			const hdr = [linear[0] * 0.6, linear[1] * 0.6, linear[2] * 0.6];
+			return hdr.map(value => Math.max(
+				(value * value * 2.51 + value * 0.03) / (value * value * 2.43 + value * 0.59 + 0.14), 0.0));
+		}
+
+		function pathTracerSrgbEncode(linear) {
+			const clamped = Math.max(linear, 0.0);
+			return clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * Math.pow(clamped, 1.0 / 2.4) - 0.055;
+		}
+
+		function pathTracerTonemap(radiance, exposure, filmic) {
+			let rgb = [radiance[0], radiance[1], radiance[2]];
+			if (exposure !== 0) {
+				rgb = rgb.map(value => value * Math.pow(2, exposure));
+			}
+			if (filmic) {
+				rgb = pathTracerFilmic(rgb);
+			}
+			return [pathTracerSrgbEncode(rgb[0]), pathTracerSrgbEncode(rgb[1]), pathTracerSrgbEncode(rgb[2])];
+		}
+
 		async function run() {
 			expect(navigator.gpu, 'WebGPU is not available');
 			// Golden values pin the JS Sobol twin to the CPU sampler. The WGSL
@@ -1143,6 +1168,124 @@
 			expect(!hdriValidationError, hdriValidationError
 				? hdriValidationError.message : 'HDRI validation error');
 
+			// GPU denoise + tonemap pass (roadmap item 5, deferred perf opt).
+			// Exercises denoiseMain's init + a-trous + tonemap modes, the RGBA8
+			// pack, and the slim 4 B/px readback. A flat (uniform) input must be
+			// unchanged by the spatial filter, so the packed bytes must match the
+			// JS twin of PathTracerTonemap within float tolerance.
+			device.pushErrorScope('validation');
+			const denoisePipeline = await device.createComputePipelineAsync({
+				label: 'voxel denoise tonemap',
+				layout: 'auto',
+				compute: {module, entryPoint: 'denoiseMain'}
+			});
+			const denoiseWidth = 4;
+			const denoiseHeight = 4;
+			const denoisePixels = denoiseWidth * denoiseHeight;
+			const makeDenoiseOutputs = radiance => {
+				const stride = 96;
+				const data = new ArrayBuffer(stride * denoisePixels);
+				const view = new DataView(data);
+				const luma = radiance[0] * 0.2126 + radiance[1] * 0.7152 + radiance[2] * 0.0722;
+				for (let i = 0; i < denoisePixels; ++i) {
+					const offset = i * stride;
+					writeVec4(view, offset, [radiance[0], radiance[1], radiance[2], 1.0], 'setFloat32');
+					writeVec4(view, offset + 16, [0.6, 0.4, 0.2, 1.0], 'setFloat32');
+					writeVec4(view, offset + 32, [0.0, 0.0, -1.0, 1.0], 'setFloat32');
+					writeVec4(view, offset + 48, [0.0, 0.0, 0.0, 1.0], 'setFloat32');
+					writeVec4(view, offset + 64, [0, 0, 0, 1], 'setUint32');
+					writeVec4(view, offset + 80, [luma * luma, 1.0, 0.0, 0.0], 'setFloat32');
+				}
+				return data;
+			};
+			const makeDenoiseParams = (mode, step, exposure, filmic) => {
+				const data = new ArrayBuffer(48);
+				const view = new DataView(data);
+				writeVec4(view, 0, [denoiseWidth, denoiseHeight, 0, 0], 'setUint32');
+				writeVec4(view, 16, [exposure, 0, 0, 0], 'setFloat32');
+				writeVec4(view, 32, [mode, step, filmic, 0], 'setUint32');
+				return data;
+			};
+			const runDenoise = async (radiance, exposure, filmic) => {
+				const denoiseOutputsBuffer = uploadBuffer(device, makeDenoiseOutputs(radiance),
+					storage, 'denoise outputs');
+				const scratchSize = denoisePixels * 16;
+				const scratchA = device.createBuffer({
+					label: 'denoise scratch A', size: scratchSize, usage: storage
+				});
+				const scratchB = device.createBuffer({
+					label: 'denoise scratch B', size: scratchSize, usage: storage
+				});
+				const finalImageBuffer = device.createBuffer({
+					label: 'final image', size: denoisePixels * 4,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+				});
+				const params = device.createBuffer({
+					label: 'denoise params', size: 48,
+					usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+				});
+				const makeBindGroup = (ping, pong) => device.createBindGroup({
+					layout: denoisePipeline.getBindGroupLayout(0),
+					entries: [
+						{binding: 0, resource: {buffer: denoiseOutputsBuffer}},
+						{binding: 1, resource: {buffer: ping}},
+						{binding: 2, resource: {buffer: pong}},
+						{binding: 3, resource: {buffer: params}},
+						{binding: 4, resource: {buffer: finalImageBuffer}}
+					]
+				});
+				const dispatch = (mode, step, ping, pong) => {
+					device.queue.writeBuffer(params, 0, makeDenoiseParams(mode, step, exposure, filmic));
+					const encoder = device.createCommandEncoder();
+					const pass = encoder.beginComputePass();
+					pass.setPipeline(denoisePipeline);
+					pass.setBindGroup(0, makeBindGroup(ping, pong));
+					pass.dispatchWorkgroups(1);
+					pass.end();
+					device.queue.submit([encoder.finish()]);
+				};
+				dispatch(0, 0, scratchB, scratchA); // init -> scratchA
+				dispatch(1, 1, scratchA, scratchB); // pass 1 -> scratchB
+				dispatch(1, 2, scratchB, scratchA); // pass 2 -> scratchA
+				dispatch(1, 4, scratchA, scratchB); // pass 3 -> scratchB
+				dispatch(2, 0, scratchB, scratchA); // tonemap <- scratchB
+				const finalReadback = device.createBuffer({
+					label: 'final readback', size: denoisePixels * 4,
+					usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+				});
+				const copyEncoder = device.createCommandEncoder();
+				copyEncoder.copyBufferToBuffer(finalImageBuffer, 0, finalReadback, 0, denoisePixels * 4);
+				device.queue.submit([copyEncoder.finish()]);
+				await finalReadback.mapAsync(GPUMapMode.READ);
+				const finalData = finalReadback.getMappedRange().slice(0);
+				finalReadback.unmap();
+				return new DataView(finalData);
+			};
+			const verifyDenoise = (view, radiance, exposure, filmic, label) => {
+				const expected = pathTracerTonemap(radiance, exposure, filmic);
+				const expectedBytes = expected.map(value =>
+					Math.floor(Math.max(0.0, Math.min(255.0, value * 255.0))));
+				for (let i = 0; i < denoisePixels; ++i) {
+					const packed = view.getUint32(i * 4, true);
+					const r = packed & 0xff;
+					const g = (packed >> 8) & 0xff;
+					const b = (packed >> 16) & 0xff;
+					const a = (packed >> 24) & 0xff;
+					expect(Math.abs(r - expectedBytes[0]) <= 2,
+						`${label} pixel ${i} red lock-step (expected ${expectedBytes[0]}, got ${r})`);
+					expect(Math.abs(g - expectedBytes[1]) <= 2,
+						`${label} pixel ${i} green lock-step (expected ${expectedBytes[1]}, got ${g})`);
+					expect(Math.abs(b - expectedBytes[2]) <= 2,
+						`${label} pixel ${i} blue lock-step (expected ${expectedBytes[2]}, got ${b})`);
+					expect(a === 255, `${label} pixel ${i} alpha (got ${a})`);
+				}
+			};
+			verifyDenoise(await runDenoise([0.5, 0.5, 0.5], 0, 0), [0.5, 0.5, 0.5], 0, 0, 'denoise default');
+			verifyDenoise(await runDenoise([0.7, 0.3, 0.2], 1, 1), [0.7, 0.3, 0.2], 1, 1, 'denoise filmic');
+			const denoiseValidationError = await device.popErrorScope();
+			expect(!denoiseValidationError, denoiseValidationError
+				? denoiseValidationError.message : 'denoise validation error');
+
 			const destroyDevice = async gpuDevice => {
 				const lost = gpuDevice.lost.catch(() => {});
 				gpuDevice.destroy();
@@ -1401,7 +1544,7 @@
 				'4/4 traversal, 4/4 primary-ray, 4/4 shading/AOV, 4/4 accumulation, ' +
 				'4/4 adaptive-sampling early stop, 1/1 multi-bounce, 1/1 emitter sampling, ' +
 				'2/2 transparent transport, 1/1 ground, 1/1 media, 1/1 HDRI, ' +
-				'2/2 64-sample 8-bounce second-start, ' +
+				'2/2 denoise tonemap lock-step, 2/2 64-sample 8-bounce second-start, ' +
 				'and 1/1 mid-render device-loss recovery cases passed';
 		}
 

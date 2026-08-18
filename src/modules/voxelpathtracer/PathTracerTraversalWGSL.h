@@ -1343,6 +1343,188 @@ fn primaryMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
         sampleOutputs[pixelIndex] = accumulateSample(sampleOutputs[pixelIndex], sample);
     }
 }
+)WGSL"
+R"WGSL(
+// ---------------------------------------------------------------------------
+// Denoise + tonemap compute pass (roadmap item 5, deferred perf optimization).
+// Runs the edge-aware a-trous spatial filter and the single linear->sRGB
+// output transform on the GPU so the only thing read back is the packed RGBA8
+// final image (4 B/px) instead of the 96-byte guide struct. Faithful port of
+// VoxelDDAPathTracer::denoiseColor (spatial only) + pathTracerTonemap.
+
+struct PathTracerDenoiseParams {
+    dimensions: vec4<u32>,      // width, height, reserved, reserved
+    exposure: vec4<f32>,        // exposure (stops), reserved, reserved, reserved
+    modeStepFilmic: vec4<u32>,  // mode (0 init / 1 filter / 2 tonemap), step, filmic, reserved
+};
+
+@group(0) @binding(0) var<storage, read> denoiseOutputs: array<PathTracerSampleOutput>;
+@group(0) @binding(1) var<storage, read> denoisePing: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> denoisePong: array<vec4<f32>>;
+@group(0) @binding(3) var<uniform> denoiseParams: PathTracerDenoiseParams;
+@group(0) @binding(4) var<storage, read_write> finalImage: array<u32>;
+
+struct DenoiseGuides {
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+    depth: f32,
+    feature: f32,
+    alpha: f32,
+    variance: f32,
+    edgeFactor: f32,
+    meanColor: vec3<f32>,
+};
+
+fn denoiseFeature(output: PathTracerSampleOutput) -> f32 {
+    return output.albedoFeature.w / max(output.moments.y, 1.0);
+}
+
+// Normalize the accumulated sample output by its own sample count (adaptive
+// sampling gives every pixel a different count; moments.y is authoritative).
+fn denoiseGuides(output: PathTracerSampleOutput) -> DenoiseGuides {
+    var guides: DenoiseGuides;
+    let count = max(output.moments.y, 1.0);
+    let scale = 1.0 / count;
+    guides.meanColor = output.radianceAlpha.xyz * scale;
+    guides.albedo = output.albedoFeature.xyz * scale;
+    var normal = output.normalDepth.xyz;
+    let normalLength = length(normal);
+    if (normalLength > 1.0e-6) {
+        normal = normal / normalLength;
+    }
+    guides.normal = normal;
+    guides.depth = output.normalDepth.w * scale;
+    guides.alpha = clamp(output.radianceAlpha.w * scale, 0.0, 1.0);
+    guides.feature = denoiseFeature(output);
+    let luma = dot(guides.meanColor, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let sampleVariance = max(output.moments.x * scale - luma * luma, 0.0);
+    guides.variance = sampleVariance * scale;
+    guides.edgeFactor = clamp(guides.feature, 0.62, 1.02);
+    return guides;
+}
+
+// IEC 61966-2-1 sRGB encode (PathTracerTonemap.h pathTracerSrgbEncode).
+fn denoiseSrgbEncode(linear: f32) -> f32 {
+    let clamped = max(linear, 0.0);
+    if (clamped <= 0.0031308) {
+        return 12.92 * clamped;
+    }
+    return 1.055 * pow(clamped, 1.0 / 2.4) - 0.055;
+}
+
+// ACES filmic approximation, Knarkowicz 2016 (pathTracerFilmic).
+fn denoiseFilmic(linear: vec3<f32>) -> vec3<f32> {
+    let hdr = linear * 0.6;
+    let ldr = (hdr * hdr * 2.51 + hdr * 0.03) / (hdr * hdr * 2.43 + hdr * 0.59 + 0.14);
+    return max(ldr, vec3<f32>(0.0));
+}
+
+fn denoiseTonemap(radiance: vec3<f32>, exposure: f32, filmic: u32) -> vec3<f32> {
+    var rgb = radiance;
+    if (exposure != 0.0) {
+        rgb = rgb * exp2(exposure);
+    }
+    if (filmic != 0u) {
+        rgb = denoiseFilmic(rgb);
+    }
+    return vec3<f32>(denoiseSrgbEncode(rgb.x), denoiseSrgbEncode(rgb.y), denoiseSrgbEncode(rgb.z));
+}
+
+@compute @workgroup_size(64)
+fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let pixelIndex = invocation.x;
+    let width = denoiseParams.dimensions.x;
+    let height = denoiseParams.dimensions.y;
+    let pixelCount = width * height;
+    if (pixelIndex >= pixelCount) {
+        return;
+    }
+    let mode = denoiseParams.modeStepFilmic.x;
+    let x = pixelIndex % width;
+    let y = pixelIndex / width;
+
+    if (mode == 0u) {
+        // Init: normalize and remove the studio-bevel feature so the analytic
+        // seam survives the spatial passes (mirrors denoiseColor's edgeFactor
+        // divide before the a-trous passes).
+        let guides = denoiseGuides(denoiseOutputs[pixelIndex]);
+        denoisePong[pixelIndex] = vec4<f32>(guides.meanColor / guides.edgeFactor, 0.0);
+        return;
+    }
+
+    if (mode == 2u) {
+        // Tonemap: re-apply the feature removed before the passes, apply the
+        // single output transform, and pack RGBA8 (matches image()).
+        let guides = denoiseGuides(denoiseOutputs[pixelIndex]);
+        let color = denoisePing[pixelIndex].xyz * guides.edgeFactor;
+        let ldr = denoiseTonemap(color, denoiseParams.exposure.x, denoiseParams.modeStepFilmic.z);
+        let r = u32(clamp(ldr.x * 255.0, 0.0, 255.0));
+        let g = u32(clamp(ldr.y * 255.0, 0.0, 255.0));
+        let b = u32(clamp(ldr.z * 255.0, 0.0, 255.0));
+        let a = u32(clamp(guides.alpha * 255.0, 0.0, 255.0));
+        finalImage[pixelIndex] = r | (g << 8u) | (b << 16u) | (a << 24u);
+        return;
+    }
+
+    // mode == 1: one edge-aware a-trous pass at the uniform's step (1, 2, 4).
+    let step = denoiseParams.modeStepFilmic.y;
+    let center = denoiseGuides(denoiseOutputs[pixelIndex]);
+    if (center.alpha < 1.0e-3) {
+        denoisePong[pixelIndex] = denoisePing[pixelIndex];
+        return;
+    }
+    let centerColor = denoisePing[pixelIndex].xyz;
+    let luma0 = dot(centerColor, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let kernel = vec3<f32>(1.0, 2.0, 1.0);
+    var sum = vec3<f32>(0.0);
+    var sumWeight = 0.0;
+    for (var ky = -1; ky <= 1; ky += 1) {
+        for (var kx = -1; kx <= 1; kx += 1) {
+            let nx = i32(x) + kx * i32(step);
+            let ny = i32(y) + ky * i32(step);
+            if (nx < 0 || ny < 0 || nx >= i32(width) || ny >= i32(height)) {
+                continue;
+            }
+            let j = u32(ny) * width + u32(nx);
+            let neighbor = denoiseGuides(denoiseOutputs[j]);
+            let neighborColor = denoisePing[j].xyz;
+            let albedoDelta = center.albedo - neighbor.albedo;
+            let albedoWeight = exp(-dot(albedoDelta, albedoDelta) * 80.0);
+            let ndot = clamp(dot(center.normal, neighbor.normal), 0.0, 1.0);
+            let normalWeight = pow(ndot, 32.0);
+            let depthScale = 0.03 * max(center.depth, neighbor.depth) + 0.01;
+            let depthDelta = abs(center.depth - neighbor.depth) / depthScale;
+            let depthWeight = exp(-depthDelta * depthDelta);
+            let featureDelta = center.feature - neighbor.feature;
+            let featureWeight = exp(-featureDelta * featureDelta * 1000.0);
+            var featureBarrierWeight = 1.0;
+            if (step > 1u && (kx != 0 || ky != 0)) {
+                var minFeature = 1.0;
+                for (var s = 1; s < i32(step); s += 1) {
+                    let sx = i32(x) + kx * s;
+                    let sy = i32(y) + ky * s;
+                    let si = u32(sy) * width + u32(sx);
+                    minFeature = min(minFeature, denoiseFeature(denoiseOutputs[si]));
+                }
+                let barrier = 1.0 - minFeature;
+                featureBarrierWeight = exp(-barrier * barrier * 64.0);
+            }
+            let alphaDelta = center.alpha - neighbor.alpha;
+            let alphaWeight = exp(-alphaDelta * alphaDelta * 64.0);
+            let luma1 = dot(neighborColor, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let colorSigma = 1.5 * sqrt(center.variance + neighbor.variance) + 0.025 * max(luma0, luma1) + 0.002;
+            let lumaDelta = (luma0 - luma1) / colorSigma;
+            let colorWeight = exp(-0.125 * lumaDelta * lumaDelta);
+            let spatialWeight = kernel[u32(kx + 1)] * kernel[u32(ky + 1)];
+            let weight = spatialWeight * albedoWeight * normalWeight * depthWeight * featureWeight *
+                featureBarrierWeight * alphaWeight * colorWeight;
+            sum += neighborColor * weight;
+            sumWeight += weight;
+        }
+    }
+    let invWeight = select(1.0, 1.0 / sumWeight, sumWeight > 1.0e-8);
+    denoisePong[pixelIndex] = vec4<f32>(sum * invWeight, 0.0);
+}
 )WGSL";
 }
 
