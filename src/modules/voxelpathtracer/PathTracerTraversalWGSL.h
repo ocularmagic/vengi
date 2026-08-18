@@ -1355,7 +1355,18 @@ R"WGSL(
 struct PathTracerDenoiseParams {
     dimensions: vec4<u32>,      // width, height, reserved, reserved
     exposure: vec4<f32>,        // exposure (stops), reserved, reserved, reserved
-    modeStepFilmic: vec4<u32>,  // mode (0 init / 1 filter / 2 tonemap), step, filmic, reserved
+    modeStepFilmic: vec4<u32>,  // mode (0 init / 1 filter / 2 tonemap / 3 temporal), step, filmic, seed
+};
+
+// Persistent per-pixel temporal history (denoiseTemporal). Color is stored
+// feature-removed: the edge factor factors out of the linear blend and is
+// re-applied once in the tonemap, which is equivalent to the CPU for a static
+// camera (camera motion resets history anyway).
+struct TemporalHistory {
+    color: vec4<f32>,        // rgb + reserved
+    normal: vec4<f32>,       // xyz + reserved
+    albedoDepth: vec4<f32>,  // albedo.xyz + depth
+    count: vec4<f32>,        // history count + reserved x3
 };
 
 @group(0) @binding(0) var<storage, read> denoiseOutputs: array<PathTracerSampleOutput>;
@@ -1363,6 +1374,10 @@ struct PathTracerDenoiseParams {
 @group(0) @binding(2) var<storage, read_write> denoisePong: array<vec4<f32>>;
 @group(0) @binding(3) var<uniform> denoiseParams: PathTracerDenoiseParams;
 @group(0) @binding(4) var<storage, read_write> finalImage: array<u32>;
+@group(0) @binding(5) var<uniform> denoiseCamera: PathTracerCameraData;
+@group(0) @binding(6) var<uniform> denoisePreviousVP: mat4x4<f32>;
+@group(0) @binding(7) var<storage, read> temporalHistory: array<TemporalHistory>;
+@group(0) @binding(8) var<storage, read_write> temporalNext: array<TemporalHistory>;
 
 struct DenoiseGuides {
     albedo: vec3<f32>,
@@ -1430,6 +1445,22 @@ fn denoiseTonemap(radiance: vec3<f32>, exposure: f32, filmic: u32) -> vec3<f32> 
     return vec3<f32>(denoiseSrgbEncode(rgb.x), denoiseSrgbEncode(rgb.y), denoiseSrgbEncode(rgb.z));
 }
 
+// Reconstruct a pixel's world position from its depth, mirroring
+// pathTracerCameraRay(camera, x+0.5, y+0.5) * depth (denoiseTemporal).
+fn denoiseWorldPosition(camera: PathTracerCameraData, depth: f32, x: u32, y: u32) -> vec3<f32> {
+    let pixelX = f32(x) + 0.5;
+    let pixelY = f32(y) + 0.5;
+    let ndcX = pixelX * camera.viewport.z * 2.0 - 1.0;
+    let ndcY = 1.0 - pixelY * camera.viewport.w * 2.0;
+    let near = camera.inverseViewProjection * vec4<f32>(ndcX, ndcY, -1.0, 1.0);
+    let far = camera.inverseViewProjection * vec4<f32>(ndcX, ndcY, 1.0, 1.0);
+    let nearPoint = near.xyz / near.w;
+    let farPoint = far.xyz / far.w;
+    let origin = nearPoint;
+    let direction = normalize(farPoint - nearPoint);
+    return origin + direction * depth;
+}
+
 @compute @workgroup_size(64)
 fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let pixelIndex = invocation.x;
@@ -1463,6 +1494,77 @@ fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let b = u32(clamp(ldr.z * 255.0, 0.0, 255.0));
         let a = u32(clamp(guides.alpha * 255.0, 0.0, 255.0));
         finalImage[pixelIndex] = r | (g << 8u) | (b << 16u) | (a << 24u);
+        return;
+    }
+
+    if (mode == 3u) {
+        // Temporal accumulation (denoiseTemporal): reproject the pixel into the
+        // previous frame's history, reject on normal/depth/albedo inconsistency,
+        // then blend with a history-count-capped EMA. Reads the spatial result
+        // from denoisePing and writes the blended color to denoisePong.
+        let guides = denoiseGuides(denoiseOutputs[pixelIndex]);
+        let spatialColor = denoisePing[pixelIndex].xyz;
+        let seed = denoiseParams.modeStepFilmic.w != 0u;
+        var history: TemporalHistory;
+        history.color = vec4<f32>(spatialColor, 0.0);
+        history.normal = vec4<f32>(guides.normal, 0.0);
+        history.albedoDepth = vec4<f32>(guides.albedo, guides.depth);
+        history.count = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+        // First temporal frame (or a reset): seed history and return unchanged.
+        if (seed) {
+            history.count = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+            denoisePong[pixelIndex] = vec4<f32>(spatialColor, 0.0);
+            temporalNext[pixelIndex] = history;
+            return;
+        }
+
+        // Transparent / background pixels keep the current color and reset
+        // history (there is no surface to reproject).
+        if (guides.alpha < 1.0e-3 || guides.depth <= 0.0) {
+            denoisePong[pixelIndex] = vec4<f32>(spatialColor, 0.0);
+            temporalNext[pixelIndex] = history;
+            return;
+        }
+
+        // Motion-vector reprojection: world position from the current camera
+        // ray + depth, projected through the previous frame's view-projection.
+        let world = denoiseWorldPosition(denoiseCamera, guides.depth, x, y);
+        let previousClip = denoisePreviousVP * vec4<f32>(world, 1.0);
+        var prevX = f32(x) + 0.5;
+        var prevY = f32(y) + 0.5;
+        if (previousClip.w > 1.0e-6) {
+            let ndcX = previousClip.x / previousClip.w;
+            let ndcY = previousClip.y / previousClip.w;
+            prevX = (ndcX * 0.5 + 0.5) * f32(width);
+            prevY = (1.0 - ndcY * 0.5) * f32(height);
+        }
+        let px = clamp(i32(floor(prevX)), 0, i32(width) - 1);
+        let py = clamp(i32(floor(prevY)), 0, i32(height) - 1);
+        let pi = u32(py) * width + u32(px);
+
+        // History rejection: normal, depth, and albedo consistency (SVGF).
+        let histColor = temporalHistory[pi].color.xyz;
+        let histNormal = temporalHistory[pi].normal.xyz;
+        let histAlbedoDepth = temporalHistory[pi].albedoDepth;
+        let histCount = temporalHistory[pi].count.x;
+        let ndot = clamp(dot(guides.normal, histNormal), 0.0, 1.0);
+        let normalWeight = pow(ndot, 32.0);
+        let depthScale = 0.03 * max(guides.depth, histAlbedoDepth.w) + 0.01;
+        let depthDelta = abs(guides.depth - histAlbedoDepth.w) / depthScale;
+        let depthWeight = exp(-depthDelta * depthDelta);
+        let albedoDelta = guides.albedo - histAlbedoDepth.xyz;
+        let albedoWeight = exp(-dot(albedoDelta, albedoDelta) * 80.0);
+        let rejectWeight = normalWeight * depthWeight * albedoWeight;
+
+        let newCount = select(0.0, min(histCount + 1.0, 32.0), rejectWeight > 0.1);
+        let temporalAlpha = 1.0 / (1.0 + newCount);
+        let blended = mix(histColor, spatialColor, temporalAlpha);
+
+        denoisePong[pixelIndex] = vec4<f32>(blended, 0.0);
+        history.color = vec4<f32>(blended, 0.0);
+        history.count = vec4<f32>(newCount, 0.0, 0.0, 0.0);
+        temporalNext[pixelIndex] = history;
         return;
     }
 
