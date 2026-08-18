@@ -690,7 +690,11 @@ bool SceneManager::save(const io::FileDescription &file, bool autosave) {
 		return false;
 	}
 	voxelformat::SaveContext saveCtx;
+#ifndef __EMSCRIPTEN__
+	// Skip the WebGL thumbnail on wasm: it allocates a second framebuffer
+	// while the WebGPU path tracer may still own the device.
 	saveCtx.thumbnailCreator = voxelrender::volumeThumbnail;
+#endif
 	const io::ArchivePtr &archive = io::openFilesystemArchive(_filesystem);
 	if (voxelformat::saveFormat(_sceneGraph, file.name, &file.desc, archive, saveCtx)) {
 		if (!autosave) {
@@ -3804,8 +3808,20 @@ void SceneManager::construct() {
 
 	const core::VarDef voxEditAnimationPlaying(cfg::VoxEditAnimationPlaying, false, N_("Animation playing"), N_("Update the children of a node when the transform of the node changes"), core::CV_NOPERSIST);
 	core::Var::registerVar(voxEditAnimationPlaying);
+#ifdef __EMSCRIPTEN__
+	// Browser autosave writes into IDBFS (/libsdl) and, on some formats, also
+	// renders a WebGL thumbnail. That thumbnail allocates a second GL
+	// framebuffer while the WebGPU path tracer still owns the device and
+	// blacks the whole tab. A refresh then drops MEMFS uploads. Default off
+	// in the wasm shell; desktop stays at 180s. Force 0 after register so a
+	// previously-persisted 180 in IndexedDB cannot keep killing the tab.
+	const core::VarDef voxEditAutoSaveSeconds(cfg::VoxEditAutoSaveSeconds, 0, N_("Autosave delay in seconds"), N_("Delay in second between autosaves - 0 disables autosaves"));
+	_autoSaveSecondsDelay = core::Var::registerVar(voxEditAutoSaveSeconds);
+	_autoSaveSecondsDelay->setVal(0);
+#else
 	const core::VarDef voxEditAutoSaveSeconds(cfg::VoxEditAutoSaveSeconds, 180, N_("Autosave delay in seconds"), N_("Delay in second between autosaves - 0 disables autosaves"));
 	_autoSaveSecondsDelay = core::Var::registerVar(voxEditAutoSaveSeconds);
+#endif
 	const core::VarDef voxEditTransformUpdateChildren(cfg::VoxEditTransformUpdateChildren, true, N_("Update children"), N_("Update the children of a node when the transform of the node changes"));
 	_transformUpdateChildren = core::Var::registerVar(voxEditTransformUpdateChildren);
 	_maxSuggestedVolumeSize = core::getVar(cfg::VoxEditMaxSuggestedVolumeSize);

@@ -566,11 +566,10 @@ bool PathTracer::start(const scenegraph::SceneGraph &sceneGraph, const video::Ca
 }
 
 bool PathTracer::restart(const scenegraph::SceneGraph &sceneGraph, const video::Camera *camera) {
-	if (!started()) {
-		return false;
+	if (started()) {
+		stop();
 	}
 	Log::debug("Restart pathtracer");
-	stop();
 	return start(sceneGraph, camera);
 }
 

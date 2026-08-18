@@ -69,6 +69,7 @@ private:
 
 	bool _popupUnsaved = false;
 	bool _popupNewScene = false;
+	bool _pendingTraceStart = false;
 	bool _popupFailedToSave = false;
 	bool _popupVolumeSplit = false;
 	bool _popupUnsavedChangesQuit = false;
@@ -187,6 +188,16 @@ public:
 	void toggleScene();
 	void resetCamera();
 	void setCameraMode(voxelrender::SceneCameraMode mode);
+	void startPathTracer() {
+		if (_sceneMgr->isLoading()) {
+			_pendingTraceStart = true;
+			Log::info("Deferring trace_start until scene finishes loading");
+			return;
+		}
+		_pendingTraceStart = false;
+		_renderPanel.startPathTracer();
+	}
+	void stopPathTracer() { _renderPanel.stopPathTracer(); }
 	/**
 	 * called directly after the scene manager has finished loading a new scene
 	 * @sa afterLoad()

@@ -39,6 +39,8 @@ public:
 	void flushToScene();
 	bool init();
 	void shutdown();
+	void startPathTracer();
+	void stopPathTracer();
 #ifdef IMGUI_ENABLE_TEST_ENGINE
 	void registerUITests(ImGuiTestEngine *engine, const char *id) override;
 #endif

@@ -28,3 +28,12 @@ compile_commands.json
 /update_dir
 
 /.hermes
+
+# Path tracer material-test working data: multi-MB HDRI + env dumps that the
+# CDP harness regenerates. Keep the small scene + driver scripts in git.
+material-test/*.exr
+material-test/*.bin
+material-test/*.png
+# Stray render outputs from ad-hoc runs
+/hmec.vxl.png
+/material-test-render.png

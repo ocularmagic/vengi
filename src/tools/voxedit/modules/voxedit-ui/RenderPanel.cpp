@@ -248,6 +248,10 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 		} else {
 			if (ImGui::IconMenuItem(ICON_LC_PLAY, _("Start path tracer"))) {
 				_currentSample = 0;
+				// Sync tracer state FROM the scene first, so the scene's saved
+				// HDRI / envhidden / filmic properties are not overwritten by
+				// tracer defaults before start() reads them back.
+				_pathTracer->applyAppearanceFromScene(_sceneMgr->sceneGraph());
 				_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
 				_pathTracer->start(sceneGraph, _sceneMgr->activeCamera());
 				// Always begin from the live viewport camera. Scene camera
@@ -285,6 +289,23 @@ void RenderPanel::flushToScene() {
 	if (_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph())) {
 		_sceneMgr->markDirty();
 	}
+}
+
+void RenderPanel::startPathTracer() {
+	_currentSample = 0;
+	// Sync tracer state FROM the scene first, so the scene's saved HDRI /
+	// envhidden / filmic properties are not overwritten by tracer defaults
+	// before start() reads them back via applyAppearanceFromScene.
+	_pathTracer->applyAppearanceFromScene(_sceneMgr->sceneGraph());
+	_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
+	_pathTracer->start(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+	if (_sceneMgr->activeCamera() != nullptr) {
+		_pathTracer->state().params.camera = 0;
+	}
+}
+
+void RenderPanel::stopPathTracer() {
+	_pathTracer->stop();
 }
 
 void RenderPanel::update(const char *id, const scenegraph::SceneGraph &sceneGraph) {

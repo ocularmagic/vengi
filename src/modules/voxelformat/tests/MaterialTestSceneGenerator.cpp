@@ -146,7 +146,9 @@ TEST_F(MaterialTestSceneGenerator, generateMaterialTestScene) {
 
 	// Ground plane: a wide diffuse slab under the clumps to catch shadows and reflections.
 	{
-		const ClumpSpec ground = {"ground", color::RGBA(160, 160, 165), palette::MaterialType::Diffuse};
+		// Keep the receiver mid-gray so it shows shadows without dominating the
+		// filmic output or hiding clear glass against a clipped white slab.
+		const ClumpSpec ground = {"ground", color::RGBA(100, 105, 110), palette::MaterialType::Diffuse};
 		palette::Palette pal = buildPalette(ground);
 		voxel::RawVolume *vol = new voxel::RawVolume(voxel::Region(glm::ivec3(-60, -8, -40), glm::ivec3(60, 0, 40)));
 		const voxel::Region region = vol->region();
@@ -177,6 +179,8 @@ TEST_F(MaterialTestSceneGenerator, generateMaterialTestScene) {
 	root.setProperty(scenegraph::PropHdriPath, "abandoned_garage_2k.exr");
 	root.setProperty(scenegraph::PropHdriIntensity, "1.0");
 	root.setProperty(scenegraph::PropGroundPlane, "false");
+	root.setProperty(scenegraph::PropEnvHidden, "false");
+	root.setProperty(scenegraph::PropRenderFilmic, "true");
 
 	VENGIFormat format;
 	const io::ArchivePtr &archive = helper_filesystemarchive();

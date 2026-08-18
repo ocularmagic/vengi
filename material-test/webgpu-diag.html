@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head><title>WebGPU Diagnostic</title></head>
+<body>
+<h1>WebGPU Diagnostic</h1>
+<pre id="output">Checking...</pre>
+<script>
+(async () => {
+	const out = document.getElementById('output');
+	const lines = [];
+	function log(s) { lines.push(s); out.textContent = lines.join('\n'); }
+
+	if (!navigator.gpu) {
+		log('FAIL: navigator.gpu is undefined');
+		log('WebGPU is NOT available in this browser.');
+		log('Possible causes:');
+		log('  - Chrome version too old (need 113+)');
+		log('  - WebGPU disabled by flag or policy');
+		log('  - GPU blocklisted (driver too old/unsupported)');
+		log('');
+		log('Try: chrome://flags/#enable-unsafe-webgpu');
+		return;
+	}
+	log('OK: navigator.gpu exists');
+
+	try {
+		const adapter = await navigator.gpu.requestAdapter();
+		if (!adapter) {
+			log('FAIL: requestAdapter() returned null');
+			log('No WebGPU adapter available. The GPU may be blocklisted.');
+			log('Try: chrome://flags/#enable-unsafe-webgpu');
+			log('Also check: chrome://gpu');
+			return;
+		}
+		log('OK: adapter found');
+
+		// Try to get adapter info (API varies by Chrome version)
+		let info = {};
+		try {
+			if (adapter.requestAdapterInfo) {
+				info = await adapter.requestAdapterInfo();
+			} else if (adapter.info) {
+				info = adapter.info;
+			}
+		} catch(e) {
+			info = {error: e.message};
+		}
+		log('Adapter info: ' + JSON.stringify(info));
+
+		// Check adapter features
+		const features = [...adapter.features];
+		log('Adapter features: ' + features.join(', '));
+
+		// Try requesting a device
+		try {
+			const device = await adapter.requestDevice();
+			log('OK: device created successfully');
+
+			// Check device features
+			const devFeatures = [...device.features];
+			log('Device features: ' + devFeatures.join(', '));
+
+			// Check device limits
+			const limits = device.limits;
+			log('Max storage buffers per shader stage: ' + limits.maxStorageBuffersPerShaderStage);
+			log('Max buffer size: ' + limits.maxBufferSize);
+			log('Max compute workgroups per dimension: ' + limits.maxComputeWorkgroupsPerDimension);
+
+			log('');
+			log('WebGPU is FULLY functional on this browser/GPU.');
+			device.destroy();
+		} catch(e) {
+			log('FAIL: requestDevice() threw: ' + e.message);
+		}
+	} catch(e) {
+		log('ERROR: ' + e.message);
+		log(e.stack || '');
+	}
+
+	log('');
+	log('--- Browser info ---');
+	log('User agent: ' + navigator.userAgent);
+})();
+</script>
+</body>
+</html>
