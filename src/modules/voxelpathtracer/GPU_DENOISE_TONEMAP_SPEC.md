@@ -158,13 +158,19 @@ final image and a 4-byte flag.
 
 Today `allPixelsConverged()` runs on the CPU from `_accumCount`/`_accumLuma2`,
 which only exist because the full 96-byte struct is read back. To eliminate
-that, add a `convergence` `storage` buffer (4 bytes) with an atomic counter:
+that, add a `convergence` `storage` buffer (4 bytes) with an atomic counter.
 
-- In `primaryMain`, when a pixel is skipped for being converged (the existing
-  `pixelConverged` early-`return`), do nothing; when it is **not** converged,
-  `atomicAdd(&unconvergedCount, 1u)`.
-- The JS driver zeroes `unconvergedCount` before the sample loop, and reads the
-  single u32 back alongside `finalImage`.
+**IMPLEMENTED (step 3, commit `be760ac`) as a separate `convergenceMain` entry
+point** rather than an atomic inside `primaryMain` — this leaves the primary
+bind-group layout untouched, gives exact post-batch semantics (no
+one-extra-batch), and is a cleanly testable unit. It reuses `pixelConverged` so
+the flag and the `primaryMain` early-out agree exactly:
+
+- `convergenceMain` reads the cumulative `sampleOutputs`, checks the same
+  `pixelConverged` predicate as `primaryMain`, and `atomicAdd`s one u32
+  (`unconvergedCount`) for each still-unconverged pixel.
+- The JS driver zeroes `unconvergedCount` before each check and reads the
+  single u32 back (4 B) alongside `finalImage`.
 - CPU reads `unconvergedCount == 0` instead of iterating `_accumCount`.
 
 This replaces the per-pixel `moments` readback with a 4-byte read. (Fallback if
