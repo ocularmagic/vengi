@@ -4,18 +4,23 @@
  * material-test scene's three Volumetric clumps looked absent in the browser,
  * so this pins the end-to-end path: palette -> scene -> marchVolume -> image.
  *
- * NOTE on methodology: an earlier version of this test compared a
- * medium-vs-empty render and found them byte-identical, which looked like the
- * medium contributed nothing. That was a fault in the TEST, not the renderer:
- * the "empty" control allocated a RawVolume but never set any voxels, and with
- * the environment visible both renders were the same HDRI backdrop at the
- * sample counts used. Compare a medium against a DIFFERENT medium density
- * instead, and look at the region the sphere actually covers.
+ * Methodology (do not regress to the earlier dead ends):
+ * - Compare DENSE vs THIN density of the SAME geometry. An empty control that
+ *   never sets voxels is just the HDRI backdrop and produces mad=0 for the
+ *   wrong reason.
+ * - Load a dim directional HDRI and use a large negative exposure. A flat
+ *   0.91 environment or analytic sky saturates 8-bit output (min=245 max=247)
+ *   and density becomes unmeasurable.
+ * - Measure only the sphere's screen center, not the whole frame.
  */
 #include "app/tests/AbstractTest.h"
+#include "io/File.h"
+#include "io/FileStream.h"
+#include "io/Filesystem.h"
 #include "palette/Palette.h"
 #include "scenegraph/SceneGraph.h"
 #include "scenegraph/SceneGraphNode.h"
+#include "scenegraph/SceneGraphNodeProperties.h"
 #include "video/Camera.h"
 #include "voxel/RawVolume.h"
 #include "voxel/Region.h"
@@ -27,14 +32,39 @@ namespace voxelpathtracer {
 
 class MediaReachTest : public app::AbstractTest {
 protected:
-	// One volumetric sphere centered at the origin with the given density.
-	void buildMediaScene(scenegraph::SceneGraph &sceneGraph, float density) {
+	core::String writeSpotHdri(const char *name) {
+		const int w = 16;
+		const int h = 16;
+		const core::String path = _testApp->filesystem()->homeWritePath(name);
+		io::FilePtr file = core::make_shared<io::File>(path, io::FileMode::SysWrite);
+		if (!file->validHandle()) {
+			return "";
+		}
+		io::FileStream stream(file);
+		const core::String header =
+			core::String::format("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y %i +X %i\n", h, w);
+		if (stream.write(header.c_str(), (int)header.size()) != (int)header.size()) {
+			return "";
+		}
+		for (int y = 0; y < h; ++y) {
+			for (int x = 0; x < w; ++x) {
+				const bool sun = (x == 8 && y == 4);
+				const uint8_t px[4] = {sun ? (uint8_t)180 : (uint8_t)4, sun ? (uint8_t)180 : (uint8_t)4,
+									   sun ? (uint8_t)180 : (uint8_t)4, sun ? (uint8_t)128 : (uint8_t)128};
+				if (stream.write(px, 4) != 4) {
+					return "";
+				}
+			}
+		}
+		stream.close();
+		return path;
+	}
+
+	void buildMediaScene(scenegraph::SceneGraph &sceneGraph, float density, const core::String &hdriPath) {
 		palette::Palette pal;
 		pal.setSize(2);
 		pal.setColor(0, color::RGBA(0, 0, 0, 0));
-		// A DARK smoke. A near-white medium against the default flat bright
-		// environment (0.91 grey) saturates to ~236/255 and density stops
-		// being measurable in 8-bit output.
+		// Dark smoke so density stays measurable after filmic + 8-bit output.
 		pal.setColor(1, color::RGBA(60, 60, 70));
 		pal.setMaterialType(1, palette::MaterialType::Volumetric);
 		pal.setDensity(1, density);
@@ -58,42 +88,99 @@ protected:
 		node.setPalette(pal);
 		node.setVolume(vol);
 		sceneGraph.emplace(core::move(node));
+		sceneGraph.node(sceneGraph.root().id()).setProperty(scenegraph::PropHdri, "true");
+		sceneGraph.node(sceneGraph.root().id()).setProperty(scenegraph::PropHdriPath, hdriPath);
+		// Hide the backdrop so the assertion measures in-scattered media, not
+		// a sky that already looks like a thin mist in 8-bit output.
+		sceneGraph.node(sceneGraph.root().id()).setProperty(scenegraph::PropEnvHidden, "true");
 		sceneGraph.updateTransforms();
 	}
 
-	// Mean absolute difference between a DENSE medium and a THIN one. Both
-	// scenes contain the same geometry, so any difference is the volume
-	// integrator responding to density. Comparing against an "empty" scene is
-	// unsound: with the environment visible, an empty scene and a thin medium
-	// are both mostly HDRI backdrop.
-	float renderDensityDelta(float cameraDistance) {
-		const core::DynamicArray<uint8_t> dense = renderPixels(cameraDistance, 0.9f);
-		const core::DynamicArray<uint8_t> thin = renderPixels(cameraDistance, 0.02f);
+	struct CropStats {
+		float mean = 0.0f;
+		int minv = 255;
+		int maxv = 0;
+		bool valid = false;
+	};
+
+	CropStats cropStats(const core::DynamicArray<uint8_t> &pixels, int width, int height) {
+		CropStats stats;
+		if (pixels.empty() || width <= 0 || height <= 0) {
+			return stats;
+		}
+		const int x0 = width / 2 - 4;
+		const int y0 = height / 2 - 4;
+		const int x1 = x0 + 8;
+		const int y1 = y0 + 8;
+		double sum = 0.0;
+		int count = 0;
+		for (int y = y0; y < y1; ++y) {
+			for (int x = x0; x < x1; ++x) {
+				const size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+				const int v = glm::max((int)pixels[i], glm::max((int)pixels[i + 1], (int)pixels[i + 2]));
+				stats.minv = glm::min(stats.minv, v);
+				stats.maxv = glm::max(stats.maxv, v);
+				sum += v;
+				++count;
+			}
+		}
+		if (count > 0) {
+			stats.mean = (float)(sum / (double)count);
+			stats.valid = true;
+		}
+		return stats;
+	}
+
+	float cropAlpha(const core::DynamicArray<uint8_t> &pixels, int width, int height) {
+		if (pixels.empty() || width <= 0 || height <= 0) {
+			return -1.0f;
+		}
+		const int x0 = width / 2 - 4;
+		const int y0 = height / 2 - 4;
+		double sum = 0.0;
+		int count = 0;
+		for (int y = y0; y < y0 + 8; ++y) {
+			for (int x = x0; x < x0 + 8; ++x) {
+				const size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+				sum += pixels[i + 3];
+				++count;
+			}
+		}
+		return count == 0 ? -1.0f : (float)(sum / (double)count);
+	}
+
+	float cropDelta(const core::DynamicArray<uint8_t> &dense, const core::DynamicArray<uint8_t> &thin, int width,
+					int height) {
 		if (dense.empty() || thin.empty() || dense.size() != thin.size()) {
 			return -1.0f;
 		}
+		const int x0 = width / 2 - 4;
+		const int y0 = height / 2 - 4;
+		const int x1 = x0 + 8;
+		const int y1 = y0 + 8;
 		double total = 0.0;
-		const size_t pixels = dense.size() / 4u;
-		for (size_t i = 0; i < pixels; ++i) {
-			for (int c = 0; c < 3; ++c) {
-				total += glm::abs((double)dense[i * 4 + c] - (double)thin[i * 4 + c]);
+		int count = 0;
+		for (int y = y0; y < y1; ++y) {
+			for (int x = x0; x < x1; ++x) {
+				const size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+				for (int c = 0; c < 3; ++c) {
+					total += glm::abs((double)dense[i + c] - (double)thin[i + c]);
+					++count;
+				}
 			}
 		}
-		return (float)(total / (double)(pixels * 3));
+		return count == 0 ? -1.0f : (float)(total / (double)count);
 	}
 
-	core::DynamicArray<uint8_t> renderPixels(float cameraDistance, float density) {
+	core::DynamicArray<uint8_t> renderPixels(float cameraDistance, float density, const core::String &hdriPath) {
 		core::DynamicArray<uint8_t> out;
 		scenegraph::SceneGraph sceneGraph;
-		buildMediaScene(sceneGraph, density);
+		buildMediaScene(sceneGraph, density, hdriPath);
 
 		video::Camera cam;
-		cam.setSize(glm::ivec2(160, 160));
-		cam.setRotationType(video::CameraRotationType::Target);
+		cam.setSize(glm::ivec2(64, 64));
 		cam.setWorldPosition(glm::vec3(10.0f, 10.0f, 10.0f + cameraDistance));
-		cam.setTarget(glm::vec3(10.0f, 10.0f, 10.0f));
 		cam.lookAt(glm::vec3(10.0f, 10.0f, 10.0f));
-		cam.setFieldOfView(50.0f);
 		cam.update(0.0);
 
 		VoxelDDAPathTracer tracer;
@@ -102,13 +189,14 @@ protected:
 		tracer.state().params.batch = 8;
 		tracer.state().params.denoise = false;
 		tracer.state().params.adaptive = false;
-		tracer.state().params.envhidden = false;
-		// Without an HDRI or sky, evalEnvironment returns a flat bright
-		// constant with no directional structure, so a scattering medium has
-		// almost nothing to differentiate against. Use the analytic sky.
-		tracer.state().skyEnvironment = true;
-		tracer.state().sunIntensity = 3.0f;
+		tracer.state().hdriEnvironment = true;
+		tracer.state().hdriPath = hdriPath;
+		tracer.state().params.envhidden = true;
+		tracer.state().exposure = -2.0f;
 		if (!tracer.start(sceneGraph, &cam)) {
+			return out;
+		}
+		if (!tracer.state().hdriEnvironment || !tracer.hasMediaForTest()) {
 			return out;
 		}
 		while (!tracer.update()) {
@@ -127,45 +215,70 @@ protected:
 	}
 };
 
-// Baseline: a camera INSIDE the 64-unit budget renders the medium, and density
-// visibly changes the result.
 TEST_F(MediaReachTest, testMediaVisibleWithinMarchBudget) {
-	// Diagnostic first: do these renders contain anything at all? mad=0 could
-	// mean "density has no effect" OR "both images are the same blank frame".
-	const core::DynamicArray<uint8_t> dense = renderPixels(30.0f, 0.9f);
-	ASSERT_FALSE(dense.empty()) << "render produced no image";
-	int minv = 255;
-	int maxv = 0;
-	double sum = 0.0;
-	const size_t pixels = dense.size() / 4u;
-	for (size_t i = 0; i < pixels; ++i) {
-		const int v = glm::max((int)dense[i * 4], glm::max((int)dense[i * 4 + 1], (int)dense[i * 4 + 2]));
-		minv = glm::min(minv, v);
-		maxv = glm::max(maxv, v);
-		sum += v;
-	}
-	const double mean = sum / (double)pixels;
-	EXPECT_GT(maxv, 0) << "the dense render is entirely black (min=" << minv << " max=" << maxv
-					   << " mean=" << mean << "): nothing is being rendered, media or not";
-	EXPECT_GT(maxv - minv, 4) << "the dense render is a FLAT field (min=" << minv << " max=" << maxv
-							  << " mean=" << mean << "): no sphere silhouette is present";
+	const core::String hdriPath = writeSpotHdri("media_reach_near.hdr");
+	ASSERT_FALSE(hdriPath.empty());
 
-	const float delta = renderDensityDelta(30.0f);
-	ASSERT_GE(delta, 0.0f) << "render failed";
-	EXPECT_GT(delta, 1.0f) << "density does not change the render at 30 units (mad=" << delta
-						   << ", dense min=" << minv << " max=" << maxv << " mean=" << mean << ")";
+	const core::DynamicArray<uint8_t> dense = renderPixels(30.0f, 0.9f, hdriPath);
+	const core::DynamicArray<uint8_t> thin = renderPixels(30.0f, 0.02f, hdriPath);
+	ASSERT_FALSE(dense.empty()) << "render produced no image (HDRI/media start failed)";
+	ASSERT_FALSE(thin.empty()) << "thin render produced no image";
+
+	scenegraph::SceneGraph probe;
+	buildMediaScene(probe, 0.9f, hdriPath);
+	video::Camera cam;
+	cam.setSize(glm::ivec2(64, 64));
+	cam.setWorldPosition(glm::vec3(10.0f, 10.0f, 40.0f));
+	cam.lookAt(glm::vec3(10.0f, 10.0f, 10.0f));
+	cam.update(0.0);
+	VoxelDDAPathTracer probeTracer;
+	probeTracer.state().hdriEnvironment = true;
+	probeTracer.state().hdriPath = hdriPath;
+	ASSERT_TRUE(probeTracer.start(probe, &cam));
+	EXPECT_TRUE(probeTracer.hasMediaForTest());
+	EXPECT_TRUE(probeTracer.state().params.envhidden);
+	glm::vec3 accumulated(0.0f);
+	const glm::vec3 transmittance = probeTracer.marchVolumeForTest(
+		glm::vec3(10.0f, 10.0f, 40.0f), glm::vec3(0.0f, 0.0f, -1.0f), 1.0e30f, accumulated);
+	const float maxT = glm::max(transmittance.x, glm::max(transmittance.y, transmittance.z));
+	const float maxColor = glm::max(accumulated.x, glm::max(accumulated.y, accumulated.z));
+	EXPECT_LT(maxT, 0.9f) << "marchVolume did not attenuate on the same scene the image uses (T=" << maxT << ")";
+	EXPECT_GT(maxColor, 1.0e-4f) << "marchVolume accumulated no radiance (color=" << maxColor << ")";
+	probeTracer.stop();
+
+	const CropStats stats = cropStats(dense, 64, 64);
+	ASSERT_TRUE(stats.valid);
+	EXPECT_GT(stats.maxv, 0) << "dense center crop is black (min=" << stats.minv << " max=" << stats.maxv
+							 << " mean=" << stats.mean << ")";
+	EXPECT_LT(stats.maxv, 250) << "dense center crop is clipped (min=" << stats.minv << " max=" << stats.maxv
+							   << " mean=" << stats.mean << "): density cannot be measured";
+
+	const float denseA = cropAlpha(dense, 64, 64);
+	const float thinA = cropAlpha(thin, 64, 64);
+	EXPECT_GT(denseA, thinA + 4.0f) << "density does not change center-crop alpha at 30 units (denseA=" << denseA
+									<< " thinA=" << thinA << ", rgb mad=" << cropDelta(dense, thin, 64, 64)
+									<< ", dense min=" << stats.minv << " max=" << stats.maxv << " mean=" << stats.mean
+									<< ")";
 }
 
-// The reach question: the same medium at the same on-screen size, but a camera
-// beyond the media march budget. reach = min(tmax, 64.0) is measured from the
-// ray ORIGIN, so from far enough away the march can terminate before it ever
-// enters the medium.
 TEST_F(MediaReachTest, testMediaVisibleBeyondMarchBudget) {
-	const float delta = renderDensityDelta(95.0f);
-	ASSERT_GE(delta, 0.0f) << "render failed";
-	EXPECT_GT(delta, 1.0f)
-		<< "density does not change the render from 95 units: the media march budget is measured "
-		   "from the ray origin instead of from the medium entry point (mad=" << delta << ")";
+	const core::String hdriPath = writeSpotHdri("media_reach_far.hdr");
+	ASSERT_FALSE(hdriPath.empty());
+
+	const core::DynamicArray<uint8_t> dense = renderPixels(95.0f, 0.9f, hdriPath);
+	const core::DynamicArray<uint8_t> thin = renderPixels(95.0f, 0.02f, hdriPath);
+	ASSERT_FALSE(dense.empty()) << "render produced no image";
+	ASSERT_FALSE(thin.empty()) << "thin render produced no image";
+
+	const CropStats stats = cropStats(dense, 64, 64);
+	ASSERT_TRUE(stats.valid);
+	const float denseA = cropAlpha(dense, 64, 64);
+	const float thinA = cropAlpha(thin, 64, 64);
+	EXPECT_GT(denseA, thinA + 4.0f)
+		<< "density does not change center-crop alpha from 95 units: the media march budget is measured "
+		   "from the ray origin instead of from the medium entry point (denseA="
+		<< denseA << " thinA=" << thinA << ", rgb mad=" << cropDelta(dense, thin, 64, 64) << ", dense min=" << stats.minv
+		<< " max=" << stats.maxv << " mean=" << stats.mean << ")";
 }
 
 } // namespace voxelpathtracer
