@@ -916,16 +916,15 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 	}
 	let direction = normalize(ray.directionMax.xyz);
 	let stepLength = max(mediaData.params.x, 0.05);
-	let reach = min(maximumDistance, mediaData.params.y);
+	let mediaTravel = max(mediaData.params.y, stepLength);
 	let jitter = sobol1D(sequenceIndex, scramble ^ 0xd1b54a35u) * stepLength;
 	let environmentSample = sampleEnvironmentIso(sequenceIndex, scramble ^ 0x94d049bbu);
 	var transmission = vec3<f32>(1.0);
-	for (var stepIndex = 0u; stepIndex < 232u; stepIndex += 1u) {
-		if (stepIndex >= mediaData.flags.y) {
-			break;
-		}
-		let distance = jitter + f32(stepIndex) * stepLength;
-		if (distance >= reach) {
+	var sampled = 0u;
+	var firstHit = -1.0;
+	for (var probeIndex = 0u; probeIndex < 2048u; probeIndex += 1u) {
+		let distance = jitter + f32(probeIndex) * stepLength;
+		if (distance >= maximumDistance) {
 			break;
 		}
 		let position = ray.originMin.xyz + direction * distance;
@@ -933,6 +932,13 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 		if (medium.data.w == 0u) {
 			continue;
 		}
+		if (firstHit < 0.0) {
+			firstHit = distance;
+		}
+		if (distance - firstHit >= mediaTravel || sampled >= mediaData.flags.y) {
+			break;
+		}
+		sampled += 1u;
 		if (integrated.albedoValid.w == 0.0) {
 			integrated.albedoValid = vec4<f32>(medium.albedoDensity.xyz, 1.0);
 			integrated.transmissionDepth.w = distance;
@@ -964,7 +970,7 @@ fn integrateMedia(ray: PathTracerRay, maximumDistance: f32, sequenceIndex: u32,
 					integrated.radianceExtinction.w);
 			}
 			let emitterSample = sampleEmitter(position, vec3<f32>(0.0), vec4<i32>(0, 0, 0, -1),
-				sequenceIndex + stepIndex, scramble ^ 0x369dea0fu);
+				sequenceIndex + probeIndex, scramble ^ 0x369dea0fu);
 			if (emitterSample.directionPdf.w > 1.0e-8) {
 				let phase = henyeyGreenstein(medium.rimLightData.x,
 					dot(direction, emitterSample.directionPdf.xyz));

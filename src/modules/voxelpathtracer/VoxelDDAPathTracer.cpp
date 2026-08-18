@@ -111,6 +111,11 @@ static glm::vec3 sampleUniformSphere(const glm::vec2 &sequence) {
 }
 
 constexpr float kMediaStep = 0.28f;
+// Empty space before the first medium must not consume the 64-unit / 232-step
+// budget. Probe this far from the ray origin looking for media, then march
+// the usual step budget from entry. 2048 * 0.28 ~= 573 world units.
+constexpr int kMediaProbeSteps = 2048;
+constexpr int kMediaSampleSteps = 232;
 
 static void tangentBasis(const glm::vec3 &n, glm::vec3 &t, glm::vec3 &b) {
 	const glm::vec3 a = (glm::abs(n.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
@@ -434,6 +439,7 @@ void VoxelDDAPathTracer::buildGrids(const scenegraph::SceneGraph &sceneGraph) {
 			material.flags = glm::uvec4(surfaceType, 0u, 0u, 0u);
 			if (surfaceType == kSurfMedia) {
 				_hasMedia = true;
+				grid.offsets.z = 1u;
 			}
 		}
 
@@ -853,17 +859,73 @@ bool VoxelDDAPathTracer::sampleMedia(const glm::vec3 &worldPos, glm::vec3 &albed
 	return false;
 }
 
+static float mediaGridEnterT(const core::DynamicArray<PathTracerGrid> &grids, const glm::vec3 &orig, const glm::vec3 &dir,
+					  float tmax) {
+	float enter = tmax;
+	for (const PathTracerGrid &grid : grids) {
+		if (grid.offsets.z == 0u) {
+			continue;
+		}
+		const glm::vec3 o = glm::vec3(grid.invWorldMat * glm::vec4(orig, 1.0f)) + grid.pivot();
+		glm::vec3 d = glm::mat3(grid.invWorldMat) * dir;
+		const float dlen2 = glm::length2(d);
+		if (dlen2 < 1.0e-16f) {
+			continue;
+		}
+		d /= glm::sqrt(dlen2);
+		const float worldPerLocal = glm::max(glm::length(glm::mat3(grid.worldMat) * d), 1.0e-8f);
+		const glm::vec3 bmin(grid.mins());
+		const glm::vec3 bmax = bmin + glm::vec3(grid.size());
+		float t0 = 0.0f;
+		float t1 = 1.0e30f;
+		bool miss = false;
+		for (int a = 0; a < 3; ++a) {
+			if (glm::abs(d[a]) < 1.0e-8f) {
+				if (o[a] < bmin[a] || o[a] >= bmax[a]) {
+					miss = true;
+					break;
+				}
+				continue;
+			}
+			const float invD = 1.0f / d[a];
+			float tNear = (bmin[a] - o[a]) * invD;
+			float tFar = (bmax[a] - o[a]) * invD;
+			if (tNear > tFar) {
+				const float tmp = tNear;
+				tNear = tFar;
+				tFar = tmp;
+			}
+			t0 = glm::max(t0, tNear);
+			t1 = glm::min(t1, tFar);
+			if (t0 > t1) {
+				miss = true;
+				break;
+			}
+		}
+		if (miss || t1 < 0.0f) {
+			continue;
+		}
+		enter = glm::min(enter, glm::max(t0, 0.0f) * worldPerLocal);
+	}
+	return enter;
+}
+
 glm::vec3 VoxelDDAPathTracer::fieldMediaT(const glm::vec3 &orig, const glm::vec3 &dir, float tmax) const {
 	if (!_hasMedia) {
 		return glm::vec3(1.0f);
 	}
 	glm::vec3 T(1.0f);
 	const glm::vec3 ndir = glm::normalize(dir);
-	const float reach = glm::min(tmax, 64.0f);
-	const int n = (int)(reach / kMediaStep) + 1;
-	for (int i = 0; i < n; ++i) {
+	const float tEnter = mediaGridEnterT(_scene.grids, orig, ndir, tmax);
+	if (tEnter >= tmax) {
+		return T;
+	}
+	int sampled = 0;
+	float tFirst = -1.0f;
+	const int i0 = (int)glm::max(0.0f, tEnter / kMediaStep - 1.0f);
+	for (int i = i0; i < i0 + kMediaProbeSteps; ++i) {
 		const float t = ((float)i + 0.5f) * kMediaStep;
-		if (t >= reach) {
+		if (t >= tmax) {
 			break;
 		}
 		glm::vec3 albedo(0.0f);
@@ -874,6 +936,13 @@ glm::vec3 VoxelDDAPathTracer::fieldMediaT(const glm::vec3 &orig, const glm::vec3
 		if (!sampleMedia(orig + ndir * t, albedo, density, rimLight, scatter, unusedEmit)) {
 			continue;
 		}
+		if (tFirst < 0.0f) {
+			tFirst = t;
+		}
+		if (t - tFirst >= 64.0f || sampled >= kMediaSampleSteps) {
+			break;
+		}
+		++sampled;
 		T *= glm::exp(-volumeSigmaT(density) * kMediaStep);
 		if (glm::max(T.x, glm::max(T.y, T.z)) < 1.0e-4f) {
 			return glm::vec3(0.0f);
@@ -1068,12 +1137,17 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 	float envPdf = 0.0f;
 	const bool haveHdri = _envIsHdri && sampleEnvironmentIso(sequenceIndex, scramble ^ 0x94d049bbu, envDir, envRad,
 															  envPdf) && envPdf > 1.0e-8f;
-	const float reach = glm::min(tmax, 64.0f);
 	const float t0 = sampling::sobol1D(sequenceIndex, scramble ^ 0xd1b54a35u) * kMediaStep;
-	const int n = (int)(reach / kMediaStep) + 2;
-	for (int i = 0; i < n; ++i) {
+	const float tEnter = mediaGridEnterT(_scene.grids, orig, ndir, tmax);
+	if (tEnter >= tmax) {
+		return T;
+	}
+	int sampled = 0;
+	float tFirst = -1.0f;
+	const int i0 = (int)glm::max(0.0f, tEnter / kMediaStep - 1.0f);
+	for (int i = i0; i < i0 + kMediaProbeSteps; ++i) {
 		const float t = t0 + (float)i * kMediaStep;
-		if (t >= reach) {
+		if (t >= tmax) {
 			break;
 		}
 		glm::vec3 albedo(0.0f);
@@ -1084,6 +1158,13 @@ glm::vec3 VoxelDDAPathTracer::marchVolume(const glm::vec3 &orig, const glm::vec3
 		if (!sampleMedia(orig + ndir * t, albedo, density, rimLight, scatter, emit)) {
 			continue;
 		}
+		if (tFirst < 0.0f) {
+			tFirst = t;
+		}
+		if (t - tFirst >= 64.0f || sampled >= kMediaSampleSteps) {
+			break;
+		}
+		++sampled;
 		const float sig = volumeSigmaT(density);
 		const float Tseg = glm::exp(-sig * kMediaStep);
 		const float absorbed = 1.0f - Tseg;
