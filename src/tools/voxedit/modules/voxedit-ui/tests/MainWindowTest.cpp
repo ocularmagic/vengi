@@ -267,6 +267,35 @@ void MainWindow::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		IM_CHECK_STR_EQ(_sceneMgr->getSuggestedFilename().c_str(), suggestedFilename.c_str());
 	};
 
+	IM_REGISTER_TEST(engine, testCategory(), "file save as png slices")->TestFunc = [=](ImGuiTestContext *ctx) {
+		IM_CHECK(resetScene(ctx, _sceneMgr));
+		IM_CHECK(focusWindow(ctx, id));
+		ctx->MenuClick("File/Save as");
+		ctx->Yield();
+		IM_CHECK(saveFile(ctx, "slices-test.png"));
+		// Check that PNG slice files were written and are valid PNG images
+		core::DynamicArray<io::FilesystemEntry> entities;
+		io::filesystem()->list("", entities);
+		int validPngCount = 0;
+		for (const io::FilesystemEntry &entry : entities) {
+			if (entry.isFile() && core::string::startsWith(entry.name, "slices-test") && core::string::endsWith(entry.name, ".png")) {
+				const io::FilePtr &file = io::filesystem()->open(entry.fullPath, io::FileMode::SysRead);
+				IM_CHECK(file && file->exists());
+				uint8_t *buf = nullptr;
+				const int len = file->read((void **)&buf);
+				IM_CHECK(buf != nullptr && len > 8);
+				// Check PNG 8-byte magic header
+				const bool isPng = (buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 &&
+				                    buf[4] == 0x0D && buf[5] == 0x0A && buf[6] == 0x1A && buf[7] == 0x0A);
+				IM_CHECK(isPng);
+				SDL_free(buf);
+				file->close();
+				++validPngCount;
+			}
+		}
+		IM_CHECK(validPngCount > 0);
+	};
+
 	IM_REGISTER_TEST(engine, testCategory(), "bindings dialog delete")->TestFunc = [=](ImGuiTestContext *ctx) {
 		IM_CHECK(focusWindow(ctx, id));
 		ctx->MenuClick("Edit/Bindings");

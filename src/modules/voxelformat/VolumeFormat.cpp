@@ -13,6 +13,8 @@
 #include "io/Archive.h"
 #include "io/File.h"
 #include "io/FilesystemArchive.h"
+#include "io/MemoryArchive.h"
+#include "io/ZipArchive.h"
 #include "scenegraph/SceneGraph.h"
 #include "io/FormatDescription.h"
 #include "io/Stream.h"
@@ -544,6 +546,72 @@ bool saveFormat(scenegraph::SceneGraph &sceneGraph, const core::String &filename
 		}
 	}
 	return false;
+}
+
+bool bundlePngSave(scenegraph::SceneGraph &sceneGraph, const core::String &filename, const io::FormatDescription *desc,
+				   const SaveContext &ctx, io::SeekableWriteStream &out, core::String &outName, core::String &outMime) {
+	const core::String &localName = core::string::extractFilenameWithExtension(filename);
+	if (localName.empty()) {
+		Log::error("No filename given for png export");
+		return false;
+	}
+	const io::MemoryArchivePtr archive = io::openMemoryArchive();
+	if (!saveFormat(sceneGraph, localName, desc, archive, ctx)) {
+		Log::error("Failed to save png export %s", localName.c_str());
+		return false;
+	}
+
+	io::ArchiveFiles files;
+	archive->list("", files, "*.png");
+	if (files.empty()) {
+		archive->list("", files, "");
+	}
+	if (files.empty()) {
+		Log::error("PNG export produced no files for %s", localName.c_str());
+		return false;
+	}
+
+	if (files.size() == 1) {
+		core::ScopedPtr<io::SeekableReadStream> in(archive->readStream(files[0].fullPath));
+		if (!in) {
+			Log::error("Failed to read exported png %s", files[0].fullPath.c_str());
+			return false;
+		}
+		if (!out.writeStream(*in)) {
+			Log::error("Failed to copy exported png %s", files[0].fullPath.c_str());
+			return false;
+		}
+		outName = files[0].name;
+		outMime = "image/png";
+		return true;
+	}
+
+	io::ZipArchive zip;
+	if (!zip.init(&out)) {
+		Log::error("Failed to create zip for png slices");
+		return false;
+	}
+	for (const io::FilesystemEntry &entry : files) {
+		core::ScopedPtr<io::SeekableReadStream> in(archive->readStream(entry.fullPath));
+		if (!in) {
+			Log::error("Failed to read slice %s", entry.fullPath.c_str());
+			return false;
+		}
+		core::ScopedPtr<io::SeekableWriteStream> zipStream(zip.writeStream(entry.name));
+		if (!zipStream) {
+			Log::error("Failed to add slice %s to zip", entry.name.c_str());
+			return false;
+		}
+		if (!zipStream->writeStream(*in)) {
+			Log::error("Failed to write slice %s into zip", entry.name.c_str());
+			return false;
+		}
+	}
+	zip.shutdown();
+
+	outName = core::String::format("%s.zip", core::string::stripExtension(localName).c_str());
+	outMime = "application/zip";
+	return true;
 }
 
 } // namespace voxelformat

@@ -27,7 +27,7 @@ namespace emscripten_browser_file {
 using upload_handler = void(*)(std::string const&, std::string const&, std::string_view buffer, void*);
 
 inline void upload(std::string const &accept_types, upload_handler callback, void *callback_data = nullptr);
-inline void download(std::string const &filename, std::string const &mime_type, std::string_view buffer);
+inline void download(std::string const &filename, std::string const &mime_type, std::string_view buffer, bool use_picker = true);
 
 ///////////////////////////////// Implementation ///////////////////////////////
 
@@ -93,7 +93,7 @@ inline void upload(std::string const &accept_types, upload_handler callback, voi
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-variable-declarations"
-EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void const *buffer, size_t buffer_size), {
+EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void const *buffer, size_t buffer_size, bool use_picker), {
   /// Offer a buffer in memory as a file to download, specifying download filename and mime type
   var name = UTF8ToString(filename);
   var type = UTF8ToString(mime_type);
@@ -104,8 +104,8 @@ EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void 
     ? Module["HEAPU8"].slice(buffer, buffer + buffer_size)
     : new Uint8Array(Module["HEAPU8"].buffer, buffer, buffer_size);
 
-  /// Try Modern File System Access API (window.showSaveFilePicker) if available
-  if (typeof window.showSaveFilePicker === 'function') {
+  /// Try Modern File System Access API (window.showSaveFilePicker) if available and requested
+  if (use_picker && typeof window.showSaveFilePicker === 'function') {
     (async function() {
       try {
         var ext = name.includes('.') ? '.' + name.split('.').pop().toLowerCase() : '.vengi';
@@ -165,9 +165,17 @@ EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void 
           var exts = Object.values(t.accept)[0];
           return exts && exts.indexOf(ext) !== -1;
         });
-        if (matchingIdx > 0) {
+        if (matchingIdx >= 0) {
           var matched = saveTypes.splice(matchingIdx, 1)[0];
           saveTypes.unshift(matched);
+        } else {
+          // If the extension wasn't found in saveTypes (e.g. unknown or generic), add it as the primary option
+          var customType = {
+            description: ext.toUpperCase() + ' File (*' + ext + ')',
+            accept: {}
+          };
+          customType.accept[type || 'application/octet-stream'] = [ext];
+          saveTypes.unshift(customType);
         }
 
         var handle = await window.showSaveFilePicker({
@@ -219,9 +227,9 @@ EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void 
 });
 #pragma GCC diagnostic pop
 
-inline void download(std::string const &filename, std::string const &mime_type, std::string_view buffer) {
+inline void download(std::string const &filename, std::string const &mime_type, std::string_view buffer, bool use_picker) {
   /// C++ wrapper for javascript download call, accepting a string_view
-  download(filename.c_str(), mime_type.c_str(), buffer.data(), buffer.size());
+  download(filename.c_str(), mime_type.c_str(), (void const *)buffer.data(), buffer.size(), use_picker);
 }
 
 #pragma GCC diagnostic push
