@@ -4,6 +4,7 @@
 
 #include "RenderPanel.h"
 #include "core/SharedPtr.h"
+#include "core/Var.h"
 #include "io/FileStream.h"
 #include "io/FormatDescription.h"
 #include "scenegraph/SceneGraph.h"
@@ -11,17 +12,93 @@
 #include "ui/IMGUIEx.h"
 #include "ui/IconsLucide.h"
 #include "ui/ScopedPanel.h"
+#include "ui/dearimgui/ImGuizmo.h"
+#include "video/Camera.h"
 #include "video/Texture.h"
+#ifdef __EMSCRIPTEN__
+#include "io/system/emscripten_browser_file.h"
+#endif
+#include "voxedit-ui/CameraPanel.h"
 #include "voxedit-util/Config.h"
 #include "voxedit-util/SceneManager.h"
 #include "voxelpathtracer/IPathTracer.h"
 #include "voxelpathtracer/PathTracerState.h"
+#include "voxelrender/CameraMovement.h"
+#include "voxelrender/RenderUtil.h"
+#include <glm/gtc/type_ptr.hpp>
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
+#include <glm/gtx/matrix_decompose.hpp>
 
 namespace voxedit {
 
+static bool s_hideAxis[3]{false, false, false};
+
+RenderPanel::RenderPanel(ui::IMGUIApp *app, const SceneManagerPtr &sceneMgr)
+	: Super(app, "render"), _pathTracer(voxelpathtracer::createPathTracer()), _sceneMgr(sceneMgr) {
+	_camera.setRotationType(video::CameraRotationType::Target);
+	_camera.setMode(video::CameraMode::Perspective);
+}
+
 bool RenderPanel::init() {
 	_texture = video::createEmptyTexture("pathtracer");
+	_viewDistance = core::getVar(cfg::VoxEditViewdistance);
+	_gizmoAllowAxisFlip = core::getVar(cfg::VoxEditGizmoAllowAxisFlip);
 	return true;
+}
+
+void RenderPanel::resetCamera() {
+	const scenegraph::SceneGraph &sceneGraph = _sceneMgr->sceneGraph();
+	const voxel::Region region = sceneGraph.sceneRegion(_sceneMgr->currentFrame(), true);
+	const video::CameraRotationType rotationType = _camera.rotationType();
+	voxelrender::SceneCameraMode cameraMode = _camMode;
+	const float farPlane = _viewDistance ? _viewDistance->floatVal() : 5000.0f;
+	voxelrender::configureCamera(_camera, region, cameraMode, farPlane);
+	_camera.setRotationType(rotationType);
+	_cameraInitialized = true;
+}
+
+void RenderPanel::setCamMode(voxelrender::SceneCameraMode mode) {
+	_camMode = mode;
+	resetCamera();
+}
+
+void RenderPanel::renderCameraManipulator(video::Camera &camera, float headerSize) {
+	if (_camMode != voxelrender::SceneCameraMode::Free) {
+		return;
+	}
+	ImVec2 position = ImGui::GetWindowPos();
+	const ImVec2 size = ImVec2(128, 128);
+	const ImVec2 available = ImGui::GetContentRegionAvail();
+	const float contentRegionWidth = available.x + ImGui::GetCursorPosX();
+	position.x += contentRegionWidth - size.x;
+	position.y += headerSize;
+	const ImU32 backgroundColor = 0;
+	const float length = camera.targetDistance();
+
+	glm::mat4 viewMatrix = camera.viewMatrix();
+	float *viewPtr = glm::value_ptr(viewMatrix);
+
+	const float *projPtr = glm::value_ptr(camera.projectionMatrix());
+	const ImGuizmo::OPERATION operation = (ImGuizmo::OPERATION)0;
+	glm::mat4 transformMatrix = glm::mat4(1.0f);
+	float *matrixPtr = glm::value_ptr(transformMatrix);
+	const ImGuizmo::MODE mode = ImGuizmo::MODE::LOCAL;
+	ImGuizmo::ViewManipulate(viewPtr, projPtr, operation, mode, matrixPtr, length, position, size, backgroundColor);
+
+	if (ImGuizmo::IsViewManipulateHovered()) {
+		_cameraManipulated = true;
+	}
+	if (viewMatrix != camera.viewMatrix()) {
+		glm::vec3 scale;
+		glm::vec3 translation;
+		glm::quat orientation;
+		glm::vec3 skew;
+		glm::vec4 perspective;
+		glm::decompose(viewMatrix, scale, orientation, translation, skew, perspective);
+		camera.setOrientation(orientation);
+	}
 }
 
 void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
@@ -153,7 +230,7 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 					_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
 					_sceneMgr->markDirty();
 					if (_pathTracer->started()) {
-						_pathTracer->restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+						_pathTracer->restart(_sceneMgr->sceneGraph(), &_camera);
 					}
 				},
 				{}, hdriFormats);
@@ -195,7 +272,7 @@ void RenderPanel::renderSettings(const scenegraph::SceneGraph &sceneGraph) {
 		if (_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph())) {
 			_sceneMgr->markDirty();
 		}
-		_pathTracer->restart(sceneGraph, _sceneMgr->activeCamera());
+		_pathTracer->restart(sceneGraph, &_camera);
 	} else if (postprocessChanged) {
 		if (_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph())) {
 			_sceneMgr->markDirty();
@@ -214,20 +291,60 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 			renderSettings(sceneGraph);
 			ImGui::EndMenu();
 		}
+		if (ImGui::BeginIconMenu(ICON_LC_EYE, _("View"))) {
+			if (ImGui::IconMenuItem(ICON_LC_VIDEO, _("Reset camera"))) {
+				resetCamera();
+			}
+			ImGui::TooltipTextUnformatted(_("Reset the render camera to frame the scene"));
+			if (ImGui::IconMenuItem(ICON_LC_REFRESH_CW, _("Sync from viewport"))) {
+				if (const video::Camera *activeCam = _sceneMgr->activeCamera()) {
+					_camera = *activeCam;
+					_camera.setRotationType(video::CameraRotationType::Target);
+					_camera.update(0.0);
+					_cameraInitialized = true;
+				}
+			}
+			ImGui::TooltipTextUnformatted(_("Copy camera pose from the active 3D edit viewport"));
+			CameraPanel::cameraProjectionCombo(_camera);
+			ImGui::EndMenu();
+		}
 		if (_image && _image->isLoaded()) {
 			if (ImGui::IconMenuItem(ICON_LC_SAVE, _("Save image"))) {
 				_app->saveDialog(
-					[=](const core::String &file, const io::FormatDescription *desc) {
-						const io::FilePtr &filePtr = _app->filesystem()->open(file, io::FileMode::SysWrite);
-						io::FileStream stream(filePtr);
-						image::writePNG(_image, stream);
+					[this](const core::String &file, const io::FormatDescription *desc) {
+						if (_image && _image->isLoaded()) {
+							const io::FilePtr &filePtr = io::filesystem()->open(file, io::FileMode::SysWrite);
+							if (filePtr) {
+								io::FileStream stream(filePtr);
+								_image->writePNG(stream);
+							}
+						#ifdef __EMSCRIPTEN__
+							const io::FilePtr &savedFile = _app->filesystem()->open(file, io::FileMode::SysRead);
+							if (savedFile && savedFile->exists()) {
+								uint8_t *buf = nullptr;
+								const int len = savedFile->read((void **)&buf);
+								if (buf != nullptr && len > 0) {
+									const core::String &downloadName = core::string::extractFilenameWithExtension(file);
+									emscripten_browser_file::download(downloadName.c_str(), "image/png", std::string_view((char const *)buf, (size_t)len), false);
+								}
+								SDL_free(buf);
+								savedFile->close();
+							}
+						#endif
+						}
 					},
 					{}, io::format::images(), "render.png");
 			}
 		}
 		if (_pathTracer->started()) {
 			if (ImGui::IconMenuItem(ICON_LC_REFRESH_CW, _("Sync camera"))) {
-				_pathTracer->restart(sceneGraph, _sceneMgr->activeCamera());
+				if (const video::Camera *activeCam = _sceneMgr->activeCamera()) {
+					_camera = *activeCam;
+					_camera.setRotationType(video::CameraRotationType::Target);
+					_camera.update(0.0);
+					_cameraInitialized = true;
+				}
+				_pathTracer->restart(sceneGraph, &_camera);
 				_pathTracer->state().params.camera = 0;
 			}
 			ImGui::TooltipTextUnformatted(_("Restart from the last focused viewport (what you were looking at)"));
@@ -247,20 +364,9 @@ void RenderPanel::renderMenuBar(const scenegraph::SceneGraph &sceneGraph) {
 			}
 		} else {
 			if (ImGui::IconMenuItem(ICON_LC_PLAY, _("Start path tracer"))) {
-				_currentSample = 0;
-				// Sync tracer state FROM the scene first, so the scene's saved
-				// HDRI / envhidden / filmic properties are not overwritten by
-				// tracer defaults before start() reads them back.
-				_pathTracer->applyAppearanceFromScene(_sceneMgr->sceneGraph());
-				_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
-				_pathTracer->start(sceneGraph, _sceneMgr->activeCamera());
-				// Always begin from the live viewport camera. Scene camera
-				// nodes and the Yocto fallback stay available in Settings.
-				if (_sceneMgr->activeCamera() != nullptr) {
-					_pathTracer->state().params.camera = 0;
-				}
+				startPathTracer();
 			}
-			ImGui::TooltipTextUnformatted(_("Trace the last focused viewport camera"));
+			ImGui::TooltipTextUnformatted(_("Trace using the current render viewport camera"));
 			const voxelpathtracer::PathTracerState &idleState = _pathTracer->state();
 			if (_currentSample > 0 && _image && _image->isLoaded()) {
 				if (_currentSample >= idleState.params.samples) {
@@ -293,15 +399,23 @@ void RenderPanel::flushToScene() {
 
 void RenderPanel::startPathTracer() {
 	_currentSample = 0;
+	if (!_cameraInitialized) {
+		if (const video::Camera *activeCam = _sceneMgr->activeCamera()) {
+			_camera = *activeCam;
+			_camera.setRotationType(video::CameraRotationType::Target);
+			_camera.update(0.0);
+			_cameraInitialized = true;
+		} else {
+			resetCamera();
+		}
+	}
 	// Sync tracer state FROM the scene first, so the scene's saved HDRI /
 	// envhidden / filmic properties are not overwritten by tracer defaults
 	// before start() reads them back via applyAppearanceFromScene.
 	_pathTracer->applyAppearanceFromScene(_sceneMgr->sceneGraph());
 	_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
-	_pathTracer->start(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
-	if (_sceneMgr->activeCamera() != nullptr) {
-		_pathTracer->state().params.camera = 0;
-	}
+	_pathTracer->start(_sceneMgr->sceneGraph(), &_camera);
+	_pathTracer->state().params.camera = 0;
 }
 
 void RenderPanel::stopPathTracer() {
@@ -322,7 +436,7 @@ bool RenderPanel::setHdri(const core::String &filename) {
 	_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
 	_sceneMgr->markDirty();
 	if (_pathTracer->started()) {
-		_pathTracer->restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+		_pathTracer->restart(_sceneMgr->sceneGraph(), &_camera);
 	}
 	Log::info("Set HDRI environment to '%s'", st.hdriPath.c_str());
 	return true;
@@ -339,17 +453,109 @@ void RenderPanel::update(const char *id, const scenegraph::SceneGraph &sceneGrap
 		_pathTracer->stop();
 		return;
 	}
+
+	if (!_cameraInitialized) {
+		if (const video::Camera *activeCam = _sceneMgr->activeCamera()) {
+			_camera = *activeCam;
+			_camera.setRotationType(video::CameraRotationType::Target);
+			_camera.update(0.0);
+			_cameraInitialized = true;
+		} else {
+			resetCamera();
+		}
+	}
+
+	if (_viewDistance) {
+		_camera.setFarPlane(_viewDistance->floatVal());
+	}
+
 	renderMenuBar(sceneGraph);
-	// TODO: allow to change the current scene camera like in the scene view in the Viewport class
+
+	const ImVec2 cursorPos = ImGui::GetCursorPos();
+	const float headerSize = cursorPos.y;
+	const ImVec2 avail = ImGui::GetContentRegionAvail();
+
+	if (avail.x > 0.0f && avail.y > 0.0f) {
+		const glm::ivec2 intAvail((int)avail.x, (int)avail.y);
+		_camera.setSize(intAvail);
+	}
+	_camera.update(_app->deltaFrameSeconds());
+
+	const glm::mat4 prevViewMatrix = _camera.viewMatrix();
+
+	// Render the path-traced image
 	if (_texture->isLoaded()) {
-		const ImVec2 avail = ImGui::GetContentRegionAvail();
 		const float texW = (float)_texture->width();
 		const float texH = (float)_texture->height();
 		if (texW > 0.0f && texH > 0.0f && avail.x > 0.0f && avail.y > 0.0f) {
 			const float scaleX = avail.x / texW;
 			const float scaleY = avail.y / texH;
 			const float scale = scaleX < scaleY ? scaleX : scaleY;
-			ImGui::Image(_texture->handle(), ImVec2(texW * scale, texH * scale));
+			const ImVec2 renderImgSize(texW * scale, texH * scale);
+			ImGui::Image(_texture->handle(), renderImgSize);
+		}
+	}
+
+	// ImGuizmo view cube manipulator
+	_cameraManipulated = false;
+	ImGuizmo::PushID("render_viewport");
+	ImGuizmo::SetDrawlist();
+	ImGuizmo::SetWindow();
+	const ImVec2 windowPos = ImGui::GetWindowPos();
+	if (_gizmoAllowAxisFlip) {
+		ImGuizmo::AllowAxisFlip(_gizmoAllowAxisFlip->boolVal());
+	}
+	ImGuizmo::SetAxisMask(s_hideAxis[0], s_hideAxis[1], s_hideAxis[2]);
+	ImGuizmo::SetRect(windowPos.x, windowPos.y + headerSize, avail.x, avail.y);
+	ImGuizmo::SetOrthographic(_camera.isOrthographic());
+	renderCameraManipulator(_camera, headerSize);
+	ImGuizmo::PopID();
+
+	const bool gizmoActive = ImGuizmo::IsOver() || ImGuizmo::IsUsing() || ImGuizmo::IsUsingAny() ||
+							 ImGuizmo::IsViewManipulateHovered() || ImGuizmo::IsUsingViewManipulate();
+	_sceneMgr->setViewportGizmoActive(gizmoActive);
+
+	// Interactive camera navigation on the render panel viewport (when not interacting with view cube)
+	if (!gizmoActive) {
+		const ImVec2 mousePos = ImGui::GetMousePos();
+		const bool isHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+							   mousePos.x >= windowPos.x && mousePos.x <= windowPos.x + avail.x &&
+							   mousePos.y >= windowPos.y + headerSize && mousePos.y <= windowPos.y + headerSize + avail.y;
+
+		if (isHovered) {
+			_sceneMgr->setActiveCamera(&_camera, false);
+			const ImGuiIO &io = ImGui::GetIO();
+			if (io.MouseWheel != 0.0f) {
+				_sceneMgr->cameraMovement().zoom(_camera, -io.MouseWheel * 10.0f);
+			}
+			if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+				const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+				ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
+				_sceneMgr->cameraMovement().rotate(_camera, delta.x, delta.y);
+			}
+			if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+				const ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
+				ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
+				_sceneMgr->cameraMovement().pan(_camera, (int)delta.x, (int)delta.y);
+			}
+		}
+	}
+
+	// Detect camera movement and restart path tracing immediately
+	_camera.update(0.0);
+	if (_camera.viewMatrix() != prevViewMatrix) {
+		if (scenegraph::SceneGraphNodeCamera *activeCam = _sceneMgr->activeCameraNode()) {
+			const scenegraph::KeyFrameIndex keyFrameIdx = activeCam->keyFrameForFrame(_sceneMgr->currentFrame());
+			voxelrender::applyCameraToNode(_camera, *activeCam, keyFrameIdx);
+			scenegraph::SceneGraphTransform &transform = activeCam->transform(keyFrameIdx);
+			if (transform.dirty()) {
+				transform.update(_sceneMgr->sceneGraph(), *activeCam, activeCam->keyFrame(keyFrameIdx).frameIdx, false);
+				_sceneMgr->sceneGraph().markKeyFramesDirty(activeCam->id());
+			}
+		}
+		if (_pathTracer->started()) {
+			_currentSample = 0;
+			_pathTracer->restart(sceneGraph, &_camera);
 		}
 	}
 #else

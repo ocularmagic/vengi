@@ -74,6 +74,13 @@ void RenderPanel::registerUITests(ImGuiTestEngine *engine, const char *id) {
 		ctx->ItemClick("//$FOCUSED/Voxel edges");
 		IM_CHECK_EQ(state.studioEdges, true);
 	};
+
+	IM_REGISTER_TEST(engine, testCategory(), "view menu and camera reset")->TestFunc = [=](ImGuiTestContext *ctx) {
+		IM_CHECK(focusWindow(ctx, TITLE_RENDER));
+		ctx->MenuAction(ImGuiTestAction_Open, "View");
+		ctx->ItemClick("//$FOCUSED/Reset camera");
+		ctx->Yield();
+	};
 }
 
 } // namespace voxedit
