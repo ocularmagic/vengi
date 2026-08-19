@@ -5,6 +5,15 @@
 #include "ZipReadStream.h"
 #include "core/Log.h"
 #include "core/StandardLib.h"
+
+#ifdef __EMSCRIPTEN__
+static void *vengi_zalloc(void *opaque, size_t items, size_t size) {
+	return SDL_malloc(items * size);
+}
+static void vengi_zfree(void *opaque, void *address) {
+	SDL_free(address);
+}
+#endif
 #if USE_LIBDEFLATE
 #include "core/collection/Buffer.h"
 #include <libdeflate.h>
@@ -61,8 +70,13 @@ ZipReadStream::ZipReadStream(io::ReadStream &readStream, int size, CompressionTy
 #else
 	_stream = (z_stream *)core_malloc(sizeof(z_stream));
 	core_memset(((z_stream *)_stream), 0, sizeof(z_stream));
+#ifdef __EMSCRIPTEN__
+	((z_stream *)_stream)->zalloc = vengi_zalloc;
+	((z_stream *)_stream)->zfree = vengi_zfree;
+#else
 	((z_stream *)_stream)->zalloc = Z_NULL;
 	((z_stream *)_stream)->zfree = Z_NULL;
+#endif
 
 	int windowBits = 0;
 	switch (type) {
@@ -131,8 +145,13 @@ ZipReadStream::ZipReadStream(io::SeekableReadStream &readStream, int size)
 #else
 	_stream = (z_stream *)core_malloc(sizeof(z_stream));
 	core_memset(((z_stream *)_stream), 0, sizeof(z_stream));
+#ifdef __EMSCRIPTEN__
+	((z_stream *)_stream)->zalloc = vengi_zalloc;
+	((z_stream *)_stream)->zfree = vengi_zfree;
+#else
 	((z_stream *)_stream)->zalloc = Z_NULL;
 	((z_stream *)_stream)->zfree = Z_NULL;
+#endif
 
 	int windowBits = 0;
 	if (gzipHeader[0] == 0x1F && gzipHeader[1] == 0x8B) {

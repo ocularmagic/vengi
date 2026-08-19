@@ -591,7 +591,12 @@ typedef struct mz_dummy_time_t_tag {
 
 #define MZ_ASSERT(x) assert(x)
 
-#ifdef MINIZ_NO_MALLOC
+#ifdef __EMSCRIPTEN__
+#include <SDL3/SDL_stdinc.h>
+#define MZ_MALLOC(x) SDL_malloc(x)
+#define MZ_FREE(x) SDL_free(x)
+#define MZ_REALLOC(p, x) SDL_realloc(p, x)
+#elif defined(MINIZ_NO_MALLOC)
 #define MZ_MALLOC(x) NULL
 #define MZ_FREE(x) (void)x, ((void)0)
 #define MZ_REALLOC(p, x) NULL

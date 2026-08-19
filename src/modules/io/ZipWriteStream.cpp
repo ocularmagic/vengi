@@ -5,6 +5,16 @@
 #include "ZipWriteStream.h"
 #include "core/StandardLib.h"
 #include "core/collection/Buffer.h"
+
+#ifdef __EMSCRIPTEN__
+static void *vengi_zalloc(void *opaque, size_t items, size_t size) {
+	return SDL_malloc(items * size);
+}
+static void vengi_zfree(void *opaque, void *address) {
+	SDL_free(address);
+}
+#endif
+
 #if USE_LIBDEFLATE
 #include <libdeflate.h>
 #elif USE_ZLIB
@@ -39,8 +49,13 @@ ZipWriteStream::ZipWriteStream(io::WriteStream &outStream, int level, bool rawDe
 #else
 	_stream = (z_stream *)core_malloc(sizeof(z_stream));
 	core_memset(((z_stream *)_stream), 0, sizeof(*((z_stream *)_stream)));
+#ifdef __EMSCRIPTEN__
+	((z_stream *)_stream)->zalloc = vengi_zalloc;
+	((z_stream *)_stream)->zfree = vengi_zfree;
+#else
 	((z_stream *)_stream)->zalloc = Z_NULL;
 	((z_stream *)_stream)->zfree = Z_NULL;
+#endif
 	const int windowBits = rawDeflate ? -Z_DEFAULT_WINDOW_BITS : Z_DEFAULT_WINDOW_BITS;
 	deflateInit2(((z_stream *)_stream), level, Z_DEFLATED, windowBits, 9, Z_DEFAULT_STRATEGY);
 #endif
