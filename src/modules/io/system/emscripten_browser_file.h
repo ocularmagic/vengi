@@ -89,17 +89,34 @@ inline void upload(std::string const &accept_types, upload_handler callback, voi
 #pragma GCC diagnostic ignored "-Wmissing-variable-declarations"
 EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void const *buffer, size_t buffer_size), {
   /// Offer a buffer in memory as a file to download, specifying download filename and mime type
-  var a = document.createElement('a');
-  a.download = UTF8ToString(filename);
+  var name = UTF8ToString(filename);
+  var type = UTF8ToString(mime_type);
   /// When HEAPU8 is backed by a SharedArrayBuffer (e.g. -pthread builds), the Blob constructor rejects it;
   /// slice() copies to a new non-shared ArrayBuffer first.  The typeof guard avoids a ReferenceError in
   /// environments where SharedArrayBuffer is not defined.
   var buffer_data = (typeof SharedArrayBuffer !== 'undefined' && Module["HEAPU8"].buffer instanceof SharedArrayBuffer)
     ? Module["HEAPU8"].slice(buffer, buffer + buffer_size)
     : new Uint8Array(Module["HEAPU8"].buffer, buffer, buffer_size);
-  a.href = URL.createObjectURL(new Blob([buffer_data], {type: UTF8ToString(mime_type)}));
-  a.click();
-  URL.revokeObjectURL(a.href);
+  /// The Blob constructor copies the bytes synchronously, so the WASM heap can be
+  /// reused or freed the moment this call returns.
+  var blob = new Blob([buffer_data], {type: type});
+  var url = URL.createObjectURL(blob);
+  /// Defer the click out of the synchronous WASM->JS call stack. A download
+  /// dispatched from inside the main thread's render loop stalls the app (the
+  /// click runs on the render thread and revoking the URL immediately after can
+  /// race the download). Appending the anchor to the DOM also makes Firefox
+  /// honour the click, and revoking only after the click lets the download start.
+  setTimeout(function () {
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }, 0);
 });
 #pragma GCC diagnostic pop
 
