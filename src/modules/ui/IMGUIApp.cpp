@@ -64,6 +64,9 @@
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_version.h>
 #include "dearimgui/backends/imgui_impl_sdl3.h"
+#ifdef __EMSCRIPTEN__
+#include "io/system/emscripten_browser_file.h"
+#endif
 
 namespace ui {
 
@@ -328,6 +331,10 @@ app::AppState IMGUIApp::onInit() {
 	ImGui::SetAllocatorFunctions(_imguiAlloc, _imguiFree);
 	ImGui::CreateContext();
 	ImPlot::CreateContext();
+
+#ifdef __EMSCRIPTEN__
+	emscripten_browser_file::initDragAndDrop();
+#endif
 
 #ifdef IMGUI_ENABLE_TEST_ENGINE
 	// Initialize Test Engine

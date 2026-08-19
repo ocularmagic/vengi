@@ -44,6 +44,7 @@ bool isMeshFormat(const core::String &filename, bool save);
 bool isMeshFormat(const io::FormatDescription &desc);
 bool isAnimationSupported(const io::FormatDescription &desc);
 bool isModelFormat(const core::String &filename);
+bool isSaveFormat(const core::String &filename, bool includeMesh = true);
 bool isPaletteEmbedded(const io::FormatDescription &desc);
 bool isRGBFormat(const io::FormatDescription &desc);
 

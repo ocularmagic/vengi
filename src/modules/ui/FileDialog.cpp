@@ -188,22 +188,35 @@ void FileDialog::selectFilter(video::OpenFileMode type, int index) {
 
 #ifdef __EMSCRIPTEN__
 void FileDialog::uploadHandler(std::string const& filename, std::string const& mimetype, std::string_view buffer, void* userdata) {
+	FileDialog *fileDialog = (FileDialog*)userdata;
+	if (fileDialog == nullptr) {
+		return;
+	}
 	if (filename.empty() || buffer.empty()) {
+		fileDialog->_waitingForBrowserPicker = false;
+		fileDialog->_dismissAfterPicker = true;
 		return;
 	}
 	const core::String uploadedFilename = core::string::extractFilenameWithExtension(filename.c_str());
 	if (uploadedFilename.empty()) {
+		fileDialog->_waitingForBrowserPicker = false;
+		fileDialog->_dismissAfterPicker = true;
 		return;
 	}
 	io::MemoryReadStream stream(buffer.data(), buffer.size());
-	FileDialog *fileDialog = (FileDialog*)userdata;
 	const io::FilesystemPtr &filesystem = io::filesystem();
 	if (filesystem->homeWrite(uploadedFilename, stream) != (long)buffer.size()) {
 		Log::error("Failed to import browser file %s", uploadedFilename.c_str());
+		fileDialog->_waitingForBrowserPicker = false;
+		fileDialog->_dismissAfterPicker = true;
 		return;
 	}
 	fileDialog->_currentPath = filesystem->homePath();
+	if (!fileDialog->_filterEntries.empty()) {
+		fileDialog->selectFilter(video::OpenFileMode::Open, 0);
+	}
 	fileDialog->readDir(video::OpenFileMode::Open);
+	fileDialog->_selectedEntry = io::FilesystemEntry{uploadedFilename, core::string::path(fileDialog->_currentPath, uploadedFilename), io::FilesystemEntry::Type::file, (uint64_t)buffer.size(), 0};
 	for (size_t i = 0; i < fileDialog->_filteredEntities.size(); ++i) {
 		const io::FilesystemEntry *entry = fileDialog->_filteredEntities[i];
 		if (entry->name == uploadedFilename) {
@@ -213,6 +226,11 @@ void FileDialog::uploadHandler(std::string const& filename, std::string const& m
 			break;
 		}
 	}
+	fileDialog->_waitingForBrowserPicker = false;
+	fileDialog->_dismissAfterPicker = false;
+	fileDialog->_optionsOnlyModal = true;
+	fileDialog->_openOptionsOnOpen = true;
+	fileDialog->_triggerSelectOnUpload = true;
 	filesystem->sync();
 }
 #endif
@@ -276,10 +294,23 @@ bool FileDialog::openDir(video::OpenFileMode type, const io::FormatDescription* 
 	}
 
 #ifdef __EMSCRIPTEN__
-	if (type == video::OpenFileMode::Open) {
+	if (type == video::OpenFileMode::Open && filename.empty()) {
+		_optionsOnlyModal = true;
+		_waitingForBrowserPicker = true;
+		_dismissAfterPicker = false;
 		emscripten_browser_file::upload("", uploadHandler, this);
 	}
 #endif
+
+	if (!filename.empty()) {
+		_optionsOnlyModal = true;
+		_openOptionsOnOpen = true;
+	} else {
+#ifndef __EMSCRIPTEN__
+		_optionsOnlyModal = false;
+#endif
+		_openOptionsOnOpen = false;
+	}
 
 	return readDir(type);
 }
@@ -678,6 +709,11 @@ void FileDialog::resetState() {
 	}
 
 	_selectedEntry = {};
+	_optionsOnlyModal = false;
+	_openOptionsOnOpen = false;
+	_triggerSelectOnUpload = false;
+	_waitingForBrowserPicker = false;
+	_dismissAfterPicker = false;
 	_scrollToText = {};
 	_error = {};
 }
@@ -733,8 +769,8 @@ bool FileDialog::popupOptions(video::FileDialogOptions &fileDialogOptions_f, cor
 	const core::String &title = makeTitle(_("Options"), OPTIONS_POPUP);
 	if (ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 		const core::String &path = assemblePath(_currentPath, _selectedEntry);
-		if (!fileDialogOptions_f || !fileDialogOptions_f(type, _currentFilterFormat, _selectedEntry) ||
-			ImGui::OkButton()) {
+		const bool hasOptions = fileDialogOptions_f && fileDialogOptions_f(type, _currentFilterFormat, _selectedEntry);
+		if (!hasOptions || ImGui::OkButton()) {
 			entityPath = path;
 			resetState();
 			*formatDesc = _currentFilterFormat;
@@ -872,6 +908,40 @@ bool FileDialog::showFileDialog(video::FileDialogOptions &options, core::String 
 	if (!showFileDialog) {
 		return false;
 	}
+
+#ifdef __EMSCRIPTEN__
+	if (_dismissAfterPicker) {
+		_dismissAfterPicker = false;
+		_optionsOnlyModal = false;
+		_waitingForBrowserPicker = false;
+		showFileDialog = false;
+		return false;
+	}
+	if (_optionsOnlyModal) {
+		// Keep the virtual directory browser closed. Wait for the OS picker,
+		// then show only the format Options modal (or auto-accept if none).
+		if (_waitingForBrowserPicker && !_openOptionsOnOpen) {
+			return false;
+		}
+		if (!ImGui::IsPopupOpen(OPTIONS_POPUP)) {
+			ImGui::OpenPopup(OPTIONS_POPUP);
+			_openOptionsOnOpen = false;
+			_waitingForBrowserPicker = false;
+		}
+		if (popupOptions(options, entityPath, type, formatDesc)) {
+			_optionsOnlyModal = false;
+			showFileDialog = false;
+			return true;
+		}
+		if (!ImGui::IsPopupOpen(OPTIONS_POPUP)) {
+			_optionsOnlyModal = false;
+			showFileDialog = false;
+			return false;
+		}
+		return false;
+	}
+#endif
+
 	float width = core_min(100.0f * ImGui::GetFontSize(), ImGui::GetMainViewport()->Size.x * 0.95f);
 	const float itemHeight = ImGui::GetTextLineHeightWithSpacing();
 	const bool hasPreview = (bool)options.preview && _showModelPreview->boolVal();
@@ -923,6 +993,10 @@ bool FileDialog::showFileDialog(video::FileDialogOptions &options, core::String 
 			}
 		}
 		bool openSelectedEntry = false;
+		if (_triggerSelectOnUpload) {
+			_triggerSelectOnUpload = false;
+			openSelectedEntry = true;
+		}
 		currentPathPanel(type);
 		const float previewSize = hasPreview ? 20.0f * itemHeight : 0.0f;
 		openSelectedEntry |= quickAccessPanel(type, _bookmarks->strVal(), 20 * itemHeight);
@@ -955,6 +1029,10 @@ bool FileDialog::showFileDialog(video::FileDialogOptions &options, core::String 
 		}
 		popupNewFolder();
 		popupNotWriteable();
+		if (_openOptionsOnOpen) {
+			_openOptionsOnOpen = false;
+			ImGui::OpenPopup(OPTIONS_POPUP);
+		}
 		if (popupAlreadyExists()) {
 			ImGui::OpenPopup(OPTIONS_POPUP);
 		}

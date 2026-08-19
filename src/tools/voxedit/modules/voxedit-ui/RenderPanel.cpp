@@ -308,6 +308,26 @@ void RenderPanel::stopPathTracer() {
 	_pathTracer->stop();
 }
 
+bool RenderPanel::setHdri(const core::String &filename) {
+	if (filename.empty()) {
+		return false;
+	}
+	voxelpathtracer::PathTracerState &st = _pathTracer->state();
+	st.hdriEnvironment = true;
+#ifdef __EMSCRIPTEN__
+	st.hdriPath = core::string::extractFilenameWithExtension(filename);
+#else
+	st.hdriPath = filename;
+#endif
+	_pathTracer->writeAppearanceToScene(_sceneMgr->sceneGraph());
+	_sceneMgr->markDirty();
+	if (_pathTracer->started()) {
+		_pathTracer->restart(_sceneMgr->sceneGraph(), _sceneMgr->activeCamera());
+	}
+	Log::info("Set HDRI environment to '%s'", st.hdriPath.c_str());
+	return true;
+}
+
 void RenderPanel::update(const char *id, const scenegraph::SceneGraph &sceneGraph) {
 	core_trace_scoped(RenderPanel);
 #if USE_YOCTO

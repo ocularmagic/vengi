@@ -3,6 +3,12 @@
 #include <string>
 #include <string_view>
 #include <emscripten.h>
+#include "app/App.h"
+#include "core/Singleton.h"
+#include "core/StringUtil.h"
+#include "io/Filesystem.h"
+#include "io/MemoryReadStream.h"
+#include "video/EventHandler.h"
 
 #define _EM_JS_INLINE(ret, c_name, js_name, params, code)                          \
   extern "C" {                                                                     \
@@ -97,15 +103,108 @@ EM_JS_INLINE(void, download, (char const *filename, char const *mime_type, void 
   var buffer_data = (typeof SharedArrayBuffer !== 'undefined' && Module["HEAPU8"].buffer instanceof SharedArrayBuffer)
     ? Module["HEAPU8"].slice(buffer, buffer + buffer_size)
     : new Uint8Array(Module["HEAPU8"].buffer, buffer, buffer_size);
-  /// The Blob constructor copies the bytes synchronously, so the WASM heap can be
-  /// reused or freed the moment this call returns.
-  var blob = new Blob([buffer_data], {type: type});
+
+  /// Try Modern File System Access API (window.showSaveFilePicker) if available
+  if (typeof window.showSaveFilePicker === 'function') {
+    (async function() {
+      try {
+        var ext = name.includes('.') ? '.' + name.split('.').pop().toLowerCase() : '.vengi';
+        var saveTypes = [
+          {
+            description: 'Vengi Scene (*.vengi)',
+            accept: { 'application/x-vengi': ['.vengi'] }
+          },
+          {
+            description: 'MagicaVoxel (*.vox)',
+            accept: { 'application/x-magicavoxel': ['.vox'] }
+          },
+          {
+            description: 'Qubicle Binary (*.qb)',
+            accept: { 'application/x-qubicle': ['.qb'] }
+          },
+          {
+            description: 'Qubicle Binary Tree (*.qbt)',
+            accept: { 'application/x-qubicle-tree': ['.qbt'] }
+          },
+          {
+            description: 'Goxel (*.gox)',
+            accept: { 'application/x-goxel': ['.gox'] }
+          },
+          {
+            description: 'CubeWorld (*.cub)',
+            accept: { 'application/x-cubeworld': ['.cub'] }
+          },
+          {
+            description: 'BinVox (*.binvox)',
+            accept: { 'application/x-binvox': ['.binvox'] }
+          },
+          {
+            description: 'glTF Binary (*.glb)',
+            accept: { 'model/gltf-binary': ['.glb'] }
+          },
+          {
+            description: 'glTF JSON (*.gltf)',
+            accept: { 'model/gltf+json': ['.gltf'] }
+          },
+          {
+            description: 'Wavefront Object (*.obj)',
+            accept: { 'text/plain': ['.obj'] }
+          },
+          {
+            description: 'Standard Triangle Language (*.stl)',
+            accept: { 'model/stl': ['.stl'] }
+          },
+          {
+            description: 'Polygon File Format (*.ply)',
+            accept: { 'application/x-ply': ['.ply'] }
+          }
+        ];
+
+        // Sort so the matching extension is first in the list
+        var matchingIdx = saveTypes.findIndex(function(t) {
+          var exts = Object.values(t.accept)[0];
+          return exts && exts.indexOf(ext) !== -1;
+        });
+        if (matchingIdx > 0) {
+          var matched = saveTypes.splice(matchingIdx, 1)[0];
+          saveTypes.unshift(matched);
+        }
+
+        var handle = await window.showSaveFilePicker({
+          suggestedName: name,
+          types: saveTypes
+        });
+        var writable = await handle.createWritable();
+        await writable.write(buffer_data);
+        await writable.close();
+        return;
+      } catch (err) {
+        // User cancelled picker or permission denied - fallback only if not AbortError
+        if (err && err.name === 'AbortError') {
+          return;
+        }
+        console.warn('showSaveFilePicker error, falling back to download:', err);
+      }
+
+      // Fallback: regular browser download
+      var blob = new Blob([buffer_data], {type: type || 'application/octet-stream'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+    })();
+    return;
+  }
+
+  /// Fallback for browsers without File System Access API (Firefox, Safari)
+  var blob = new Blob([buffer_data], {type: type || 'application/octet-stream'});
   var url = URL.createObjectURL(blob);
-  /// Defer the click out of the synchronous WASM->JS call stack. A download
-  /// dispatched from inside the main thread's render loop stalls the app (the
-  /// click runs on the render thread and revoking the URL immediately after can
-  /// race the download). Appending the anchor to the DOM also makes Firefox
-  /// honour the click, and revoking only after the click lets the download start.
   setTimeout(function () {
     var a = document.createElement('a');
     a.href = url;
@@ -125,11 +224,81 @@ inline void download(std::string const &filename, std::string const &mime_type, 
   download(filename.c_str(), mime_type.c_str(), buffer.data(), buffer.size());
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-variable-declarations"
+EM_JS_INLINE(void, init_drag_and_drop, (), {
+  var target = document.querySelector('canvas') || document.body;
+  if (!target || target._vengi_dnd_initialized) {
+    return;
+  }
+  target._vengi_dnd_initialized = true;
+
+  target.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  });
+
+  target.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  target.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) {
+      return;
+    }
+    for (var i = 0; i < e.dataTransfer.files.length; ++i) {
+      var file = e.dataTransfer.files[i];
+      var reader = new FileReader();
+      reader.onload = (function(f) {
+        return function(event) {
+          var uint8Arr = new Uint8Array(event.target.result);
+          var data_ptr = Module["_malloc"](uint8Arr.length);
+          var data_on_heap = new Uint8Array(Module["HEAPU8"].buffer, data_ptr, uint8Arr.length);
+          data_on_heap.set(uint8Arr);
+          Module["ccall"]('drop_file_return', 'number', ['string', 'number', 'number'], [f.name, data_on_heap.byteOffset, uint8Arr.length]);
+          Module["_free"](data_ptr);
+        };
+      })(file);
+      reader.readAsArrayBuffer(file);
+    }
+  });
+});
+#pragma GCC diagnostic pop
+
+inline void initDragAndDrop() {
+  init_drag_and_drop();
+}
+
 namespace {
 
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE inline int upload_file_return(char const *filename, char const *mime_type, char *buffer, size_t buffer_size, upload_handler callback, void *callback_data);
+EMSCRIPTEN_KEEPALIVE inline int drop_file_return(char const *filename, char *buffer, size_t buffer_size);
+
+EMSCRIPTEN_KEEPALIVE inline int drop_file_return(char const *filename, char *buffer, size_t buffer_size) {
+  if (!filename || !buffer || buffer_size == 0) {
+    return 0;
+  }
+  const core::String uploadedFilename = core::string::extractFilenameWithExtension(filename);
+  if (uploadedFilename.empty()) {
+    return 0;
+  }
+  io::MemoryReadStream stream(buffer, buffer_size);
+  const io::FilesystemPtr &fs = io::filesystem();
+  if (fs->homeWrite(uploadedFilename, stream) != (long)buffer_size) {
+    return 0;
+  }
+  fs->sync();
+  core::Singleton<video::EventHandler>::getInstance().dropFile(nullptr, uploadedFilename);
+  return 1;
+}
 
 EMSCRIPTEN_KEEPALIVE inline int upload_file_return(char const *filename, char const *mime_type, char *buffer, size_t buffer_size, upload_handler callback, void *callback_data) {
   /// Load a file - this function is called from javascript when the file upload is activated

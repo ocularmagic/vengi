@@ -198,6 +198,7 @@ public:
 		_renderPanel.startPathTracer();
 	}
 	void stopPathTracer() { _renderPanel.stopPathTracer(); }
+	bool setHdri(const core::String &filename) { return _renderPanel.setHdri(filename); }
 	/**
 	 * called directly after the scene manager has finished loading a new scene
 	 * @sa afterLoad()
