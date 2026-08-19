@@ -263,8 +263,19 @@ int File::read(void **buffer) {
 	if (len <= 0) {
 		return len;
 	}
-	*buffer = new uint8_t[len];
-	return read(*buffer, len);
+	// Use SDL_malloc/SDL_free consistently with the Emscripten/SDL heap
+	// (dlmalloc with pthreads). Mixing new[]/delete[] with SDL's free-list
+	// can corrupt the shared heap when the download path races pointer events.
+	*buffer = (uint8_t*)SDL_malloc(len);
+	if (*buffer == nullptr) {
+		return -1;
+	}
+	const int ret = read(*buffer, len);
+	if (ret <= 0) {
+		SDL_free(*buffer);
+		*buffer = nullptr;
+	}
+	return ret;
 }
 
 int File::read(void *buffer, int n) {
@@ -337,7 +348,7 @@ void File::close() {
 				if (len > 0) {
 					emscripten_browser_file::download(_rawPath.c_str(), "application/octet-stream", buf, (size_t)len);
 				}
-				delete[] buf;
+				SDL_free(buf);
 				closeRWops(_file);
 				_file = nullptr;
 			}
