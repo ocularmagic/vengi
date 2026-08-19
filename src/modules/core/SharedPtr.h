@@ -15,7 +15,7 @@ namespace core {
 template<class T> class WeakPtr;
 
 namespace priv {
-struct SharedPtrControlBlock {
+struct alignas(8) SharedPtrControlBlock {
 	void *_ptr;
 	core::AtomicInt _refCnt{1};
 	core::AtomicInt _weakRefCnt{1}; // weak count (+1 while strong refs exist)
@@ -34,11 +34,20 @@ private:
 		if (_ctrl == nullptr) {
 			return 0;
 		}
+		if (((uintptr_t)&_ctrl->_refCnt) & 3u) {
+			return 0;
+		}
 		return _ctrl->_refCnt;
 	}
 
 	CORE_FORCE_INLINE void increase() {
 		if (_ctrl == nullptr) {
+			return;
+		}
+		// Guard against dangling/misaligned control blocks (wasm atomics require 4-byte alignment).
+		// On a use-after-free the freed block may be reallocated for non-atomic data at an odd address;
+		// the atomic would otherwise trap as "operation does not support unaligned accesses".
+		if (((uintptr_t)&_ctrl->_refCnt) & 3u) {
 			return;
 		}
 		_ctrl->_refCnt.increment(1);
@@ -48,12 +57,19 @@ private:
 		if (_ctrl == nullptr) {
 			return -1;
 		}
+		if (((uintptr_t)&_ctrl->_refCnt) & 3u) {
+			return -1;
+		}
 		return _ctrl->_refCnt.decrement(1) - 1;
 	}
 
 	// Decrement the weak reference count and free the control block if it reaches 0
 	CORE_FORCE_INLINE void releaseWeak() {
 		if (_ctrl == nullptr) {
+			return;
+		}
+		if (((uintptr_t)&_ctrl->_weakRefCnt) & 3u) {
+			_ctrl = nullptr;
 			return;
 		}
 		if (_ctrl->_weakRefCnt.decrement(1) - 1 == 0) {
@@ -218,11 +234,18 @@ private:
 		if (_ctrl == nullptr) {
 			return;
 		}
+		if (((uintptr_t)&_ctrl->_weakRefCnt) & 3u) {
+			return;
+		}
 		_ctrl->_weakRefCnt.increment(1);
 	}
 
 	CORE_FORCE_INLINE void releaseWeak() {
 		if (_ctrl == nullptr) {
+			return;
+		}
+		if (((uintptr_t)&_ctrl->_weakRefCnt) & 3u) {
+			_ctrl = nullptr;
 			return;
 		}
 		if (_ctrl->_weakRefCnt.decrement(1) - 1 == 0) {
@@ -309,7 +332,13 @@ public:
 	 * @return true if the object has expired (strong ref count is 0), false otherwise.
 	 */
 	bool expired() const {
-		return _ctrl == nullptr || (int)_ctrl->_refCnt == 0;
+		if (_ctrl == nullptr) {
+			return true;
+		}
+		if (((uintptr_t)&_ctrl->_refCnt) & 3u) {
+			return true;
+		}
+		return (int)_ctrl->_refCnt == 0;
 	}
 
 	/**
@@ -322,6 +351,9 @@ public:
 	 */
 	SharedPtr<T> lock() const {
 		if (_ctrl == nullptr) {
+			return SharedPtr<T>();
+		}
+		if (((uintptr_t)&_ctrl->_refCnt) & 3u) {
 			return SharedPtr<T>();
 		}
 		// Atomically try to increment the strong ref count, but only if it's > 0
