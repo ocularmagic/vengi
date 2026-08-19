@@ -6,11 +6,15 @@
 #include "AbstractFormatTest.h"
 #include "color/RGBA.h"
 #include "core/ScopedPtr.h"
+#include "core/StringUtil.h"
 #include "image/Image.h"
 #include "image/ImageType.h"
 #include "io/Archive.h"
+#include "io/BufferedReadWriteStream.h"
+#include "io/FormatDescription.h"
 #include "io/MemoryArchive.h"
 #include "io/Stream.h"
+#include "io/ZipArchive.h"
 #include "palette/Palette.h"
 #include "scenegraph/SceneGraph.h"
 #include "scenegraph/SceneGraphNode.h"
@@ -18,6 +22,7 @@
 #include "voxel/RawVolume.h"
 #include "voxel/Region.h"
 #include "voxel/Voxel.h"
+#include "voxelformat/VolumeFormat.h"
 
 namespace voxelformat {
 
@@ -230,6 +235,91 @@ TEST_F(PNGFormatTest, testSaveSlicesTopDownXZ) {
 	EXPECT_EQ(red, top.colorAt(1, 1));
 	// Front (+Z) is the top row of the XZ image.
 	EXPECT_EQ(blue, mid.colorAt(1, 0));
+}
+
+TEST_F(PNGFormatTest, testBundlePngSaveSlicesZip) {
+	util::ScopedVarChange saveType(cfg::VoxformatImageSaveType, PNGFormat::ImageType::Plane);
+	util::ScopedVarChange hollow(cfg::VoxformatImageSliceHollowInterior, "false");
+
+	const color::RGBA red(200, 40, 40, 255);
+	const color::RGBA blue(40, 40, 200, 255);
+	palette::Palette pal;
+	uint8_t redIdx = 0;
+	uint8_t blueIdx = 0;
+	ASSERT_TRUE(pal.tryAdd(red, false, &redIdx, false));
+	ASSERT_TRUE(pal.tryAdd(blue, false, &blueIdx, false));
+
+	const voxel::Region region(0, 0, 0, 2, 2, 2);
+	voxel::RawVolume volume(region);
+	volume.setVoxel(1, 2, 1, voxel::createVoxel(voxel::VoxelType::Generic, redIdx));
+	volume.setVoxel(1, 1, 2, voxel::createVoxel(voxel::VoxelType::Generic, blueIdx));
+
+	scenegraph::SceneGraph sceneGraph;
+	scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
+	node.setUnownedVolume(&volume);
+	node.setPalette(pal);
+	ASSERT_NE(sceneGraph.emplace(core::move(node)), InvalidNodeId);
+
+	io::BufferedReadWriteStream bundle;
+	core::String outName;
+	core::String outMime;
+	const io::FormatDescription pngDesc = io::format::png();
+	ASSERT_TRUE(bundlePngSave(sceneGraph, "slices.png", &pngDesc, testSaveCtx, bundle, outName, outMime));
+	EXPECT_EQ("application/zip", outMime);
+	EXPECT_EQ("slices.zip", outName);
+	ASSERT_GT(bundle.size(), 4);
+
+	bundle.seek(0);
+	io::ZipArchive zip;
+	ASSERT_TRUE(zip.init("slices.zip", &bundle));
+	io::ArchiveFiles files;
+	zip.list("", files, "*.png");
+	ASSERT_EQ(2u, files.size());
+	for (const io::FilesystemEntry &entry : files) {
+		core::ScopedPtr<io::SeekableReadStream> stream(zip.readStream(entry.fullPath));
+		ASSERT_TRUE(stream);
+		uint8_t magic[8];
+		ASSERT_EQ(8, stream->read(magic, sizeof(magic)));
+		EXPECT_EQ(0x89, magic[0]);
+		EXPECT_EQ(0x50, magic[1]);
+		EXPECT_EQ(0x4E, magic[2]);
+		EXPECT_EQ(0x47, magic[3]);
+	}
+}
+
+TEST_F(PNGFormatTest, testBundlePngSaveSingleSlice) {
+	util::ScopedVarChange saveType(cfg::VoxformatImageSaveType, PNGFormat::ImageType::Plane);
+	util::ScopedVarChange hollow(cfg::VoxformatImageSliceHollowInterior, "false");
+
+	const color::RGBA white(255, 255, 255, 255);
+	palette::Palette pal;
+	uint8_t whiteIdx = 0;
+	ASSERT_TRUE(pal.tryAdd(white, false, &whiteIdx, false));
+
+	const voxel::Region region(0, 0, 0, 0, 0, 0);
+	voxel::RawVolume volume(region);
+	volume.setVoxel(0, 0, 0, voxel::createVoxel(voxel::VoxelType::Generic, whiteIdx));
+
+	scenegraph::SceneGraph sceneGraph;
+	scenegraph::SceneGraphNode node(scenegraph::SceneGraphNodeType::Model);
+	node.setUnownedVolume(&volume);
+	node.setPalette(pal);
+	ASSERT_NE(sceneGraph.emplace(core::move(node)), InvalidNodeId);
+
+	io::BufferedReadWriteStream bundle;
+	core::String outName;
+	core::String outMime;
+	const io::FormatDescription pngDesc = io::format::png();
+	ASSERT_TRUE(bundlePngSave(sceneGraph, "/virtual/home/one.png", &pngDesc, testSaveCtx, bundle, outName, outMime));
+	EXPECT_EQ("image/png", outMime);
+	EXPECT_TRUE(core::string::endsWith(outName, ".png"));
+	EXPECT_FALSE(core::string::endsWith(outName, "one.png"));
+	ASSERT_GT(bundle.size(), 8);
+	const uint8_t *buf = bundle.getBuffer();
+	EXPECT_EQ(0x89, buf[0]);
+	EXPECT_EQ(0x50, buf[1]);
+	EXPECT_EQ(0x4E, buf[2]);
+	EXPECT_EQ(0x47, buf[3]);
 }
 
 } // namespace voxelformat

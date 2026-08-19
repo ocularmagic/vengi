@@ -15,6 +15,7 @@
 #include "core/String.h"
 #include "core/StringUtil.h"
 #include "engine-config.h"
+#include "io/BufferedReadWriteStream.h"
 #include "io/Filesystem.h"
 #include "io/FormatDescription.h"
 #ifdef __EMSCRIPTEN__
@@ -283,6 +284,36 @@ bool MainWindow::save(const core::String &file, const io::FormatDescription *des
 #if USE_YOCTO
 	_renderPanel.flushToScene();
 #endif
+#ifdef __EMSCRIPTEN__
+	const core::String &saveExt = core::string::extractExtension(fd.name).toLower();
+	if (saveExt == "png") {
+		// PNGFormat writes one file per slice (and never the basename.png stub). The OS
+		// picker can only accept a single file, so pack slices into a zip in memory.
+		// Do this independently of the virtual filesystem write so a path mismatch
+		// cannot swallow the download.
+		io::BufferedReadWriteStream bundle;
+		core::String downloadName;
+		core::String mimeType;
+		voxelformat::SaveContext saveCtx;
+		if (!voxelformat::bundlePngSave(_sceneMgr->sceneGraph(), fd.name, &fd.desc, saveCtx, bundle, downloadName,
+									   mimeType) ||
+			bundle.size() <= 0) {
+			Log::warn("Failed to bundle png export for download");
+			_popupFailedToSave = true;
+			return false;
+		}
+		emscripten_browser_file::download(downloadName.c_str(), mimeType.c_str(),
+										  std::string_view((char const *)bundle.getBuffer(), (size_t)bundle.size()),
+										  true);
+		if (!_sceneMgr->save(fd)) {
+			Log::debug("PNG slices downloaded; virtual filesystem save was skipped or failed");
+		} else {
+			_app->filesystem()->sync();
+		}
+		Log::info("Saved the model to %s", downloadName.c_str());
+		return true;
+	}
+#endif
 	if (!_sceneMgr->save(fd)) {
 		Log::warn("Failed to save the model");
 		_popupFailedToSave = true;
@@ -290,16 +321,18 @@ bool MainWindow::save(const core::String &file, const io::FormatDescription *des
 	}
 	_app->filesystem()->sync();
 #ifdef __EMSCRIPTEN__
-	const io::FilePtr &savedFile = _app->filesystem()->open(fd.name, io::FileMode::SysRead);
-	if (savedFile && savedFile->exists()) {
-		uint8_t *buf = nullptr;
-		const int len = savedFile->read((void **)&buf);
-		if (buf != nullptr && len > 0) {
-			const core::String &downloadName = core::string::extractFilenameWithExtension(fd.name);
-			emscripten_browser_file::download(downloadName.c_str(), "application/octet-stream", buf, (size_t)len);
+	{
+		const io::FilePtr &savedFile = _app->filesystem()->open(fd.name, io::FileMode::SysRead);
+		if (savedFile && savedFile->exists()) {
+			uint8_t *buf = nullptr;
+			const int len = savedFile->read((void **)&buf);
+			if (buf != nullptr && len > 0) {
+				const core::String &downloadName = core::string::extractFilenameWithExtension(fd.name);
+				emscripten_browser_file::download(downloadName.c_str(), "application/octet-stream", std::string_view((char const *)buf, (size_t)len), true);
+			}
+			SDL_free(buf);
+			savedFile->close();
 		}
-		SDL_free(buf);
-		savedFile->close();
 	}
 #endif
 	Log::info("Saved the model to %s", fd.c_str());
@@ -1319,6 +1352,19 @@ bool MainWindow::saveScreenshot(const core::String &file, const core::String &vi
 				return false;
 			}
 			Log::info("Screenshot created at '%s'", file.c_str());
+		#ifdef __EMSCRIPTEN__
+			const io::FilePtr &savedFile = _app->filesystem()->open(file, io::FileMode::SysRead);
+			if (savedFile && savedFile->exists()) {
+				uint8_t *buf = nullptr;
+				const int len = savedFile->read((void **)&buf);
+				if (buf != nullptr && len > 0) {
+					const core::String &downloadName = core::string::extractFilenameWithExtension(file);
+					emscripten_browser_file::download(downloadName.c_str(), "image/png", std::string_view((char const *)buf, (size_t)len), false);
+				}
+				SDL_free(buf);
+				savedFile->close();
+			}
+		#endif
 			return true;
 		}
 		return false;
@@ -1332,6 +1378,19 @@ bool MainWindow::saveScreenshot(const core::String &file, const core::String &vi
 			return false;
 		}
 		Log::info("Screenshot created at '%s'", file.c_str());
+	#ifdef __EMSCRIPTEN__
+		const io::FilePtr &savedFile = _app->filesystem()->open(file, io::FileMode::SysRead);
+		if (savedFile && savedFile->exists()) {
+			uint8_t *buf = nullptr;
+			const int len = savedFile->read((void **)&buf);
+			if (buf != nullptr && len > 0) {
+				const core::String &downloadName = core::string::extractFilenameWithExtension(file);
+				emscripten_browser_file::download(downloadName.c_str(), "image/png", std::string_view((char const *)buf, (size_t)len), false);
+			}
+			SDL_free(buf);
+			savedFile->close();
+		}
+	#endif
 		return true;
 	}
 	return false;

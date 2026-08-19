@@ -16,7 +16,7 @@ Occupancy and color are two separate passes.
 
 Cubic voxels do **not** store the source triangle normal. The edit viewport lights each cube from its visible face (same as MagicaVoxel `.vox`). Triangle normals on a cube shade the whole voxel as a slanted plane and look dark/grey. A normal palette is still attached to the node so you can calculate or paint normals later (Command & Conquer). Use **Show normals** to visualize stored normals; they are not used for cube lighting.
 
-PNG slice export (`voxformat_imagesavetype` `0`) writes one XZ image per height (Y), top of the model first. Buried exact-white fill becomes transparent except a 1-voxel liner next to the colored shell. Disable the liner/hollow with `voxformat_imageslicehollowinterior false`.
+PNG slice export (`voxformat_imagesavetype` `0`) writes one XZ image per height (Y), top of the model first. Buried exact-white fill becomes transparent except a 1-voxel liner next to the colored shell. Disable the liner/hollow with `voxformat_imageslicehollowinterior false`. In the web build, File -> Save as PNG packs those slice images into a single `.zip` because the browser save dialog can only write one file.
 
 Do not expect triangle-overlap averaging, largest-face heuristics, or `centerUV` fallbacks in this mode.
 

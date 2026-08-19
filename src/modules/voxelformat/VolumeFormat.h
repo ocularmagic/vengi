@@ -40,6 +40,13 @@ bool loadFormat(const io::FileDescription &fileDesc, const io::ArchivePtr &archi
 bool saveFormat(scenegraph::SceneGraph &sceneGraph, const core::String &filename, const io::FormatDescription *desc,
 				const io::ArchivePtr &archive, const SaveContext &ctx);
 
+/**
+ * Save PNG (slices, heightmaps, or thumbnail) into memory and pack the result for a single download.
+ * One image is returned as a PNG; two or more slice/heightmap files are packed as a zip.
+ */
+bool bundlePngSave(scenegraph::SceneGraph &sceneGraph, const core::String &filename, const io::FormatDescription *desc,
+				   const SaveContext &ctx, io::SeekableWriteStream &out, core::String &outName, core::String &outMime);
+
 bool isMeshFormat(const core::String &filename, bool save);
 bool isMeshFormat(const io::FormatDescription &desc);
 bool isAnimationSupported(const io::FormatDescription &desc);

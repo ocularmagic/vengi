@@ -768,17 +768,58 @@ bool FileDialog::popupOptions(video::FileDialogOptions &fileDialogOptions_f, cor
 							  video::OpenFileMode type, const io::FormatDescription **formatDesc) {
 	const core::String &title = makeTitle(_("Options"), OPTIONS_POPUP);
 	if (ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		const core::String &path = assemblePath(_currentPath, _selectedEntry);
+#ifdef __EMSCRIPTEN__
+		const bool wasmSavePicker = _optionsOnlyModal && type == video::OpenFileMode::Save;
+#else
+		const bool wasmSavePicker = false;
+#endif
+		if (wasmSavePicker) {
+			if (_selectedEntry.name.empty()) {
+				_selectedEntry.name = "scene";
+				_selectedEntry.type = io::FilesystemEntry::Type::file;
+			}
+			if (ImGui::InputText(_("Filename"), &_selectedEntry.name)) {
+				_selectedEntry.fullPath = core::string::path(_currentPath, _selectedEntry.name);
+				_selectedEntry.type = io::FilesystemEntry::Type::file;
+			}
+			if (!_filterEntries.empty()) {
+				int currentlySelected = _currentFilterEntry == -1 ? 0 : _currentFilterEntry;
+				if (_currentFilterFormat != nullptr && (_currentFilterFormat->flags & FORMAT_FLAG_ALL) &&
+					_filterEntries.size() > 1) {
+					currentlySelected = 1;
+					selectFilter(type, currentlySelected);
+				}
+				const core::String &selectedEntry =
+					_currentFilterFormat ? io::convertToFilePattern(*_currentFilterFormat) : "";
+				if (ImGui::BeginCombo(_("Format"), selectedEntry.c_str(), ImGuiComboFlags_HeightLargest)) {
+					for (int i = 0; i < (int)_filterEntries.size(); ++i) {
+						const io::FormatDescription &format = _filterEntries[i];
+						if (format.flags & FORMAT_FLAG_ALL) {
+							continue;
+						}
+						const bool selected = i == currentlySelected;
+						const core::String &text = io::convertToFilePattern(format);
+						if (ImGui::Selectable(text.c_str(), selected)) {
+							selectFilter(type, i);
+						}
+						if (selected) {
+							ImGui::SetItemDefaultFocus();
+						}
+					}
+					ImGui::EndCombo();
+				}
+			}
+		}
 		const bool hasOptions = fileDialogOptions_f && fileDialogOptions_f(type, _currentFilterFormat, _selectedEntry);
-		if (!hasOptions || ImGui::OkButton()) {
-			entityPath = path;
+		if ((!hasOptions && !wasmSavePicker) || ImGui::OkButton()) {
+			entityPath = assemblePath(_currentPath, _selectedEntry);
 			resetState();
 			*formatDesc = _currentFilterFormat;
 			ImGui::CloseCurrentPopup();
 			ImGui::EndPopup();
 			return true;
 		}
-		ImGui::TooltipTextUnformatted(path.c_str());
+		ImGui::TooltipTextUnformatted(assemblePath(_currentPath, _selectedEntry).c_str());
 		ImGui::SameLine();
 		if (ImGui::CancelButton()) {
 			ImGui::CloseCurrentPopup();
