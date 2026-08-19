@@ -68,6 +68,11 @@ private:
 	io::FilesystemEntry _newFolderName;
 	TimedString _newFolderError;
 
+	bool _optionsOnlyModal = false;
+	bool _openOptionsOnOpen = false;
+	bool _triggerSelectOnUpload = false;
+	bool _waitingForBrowserPicker = false;
+	bool _dismissAfterPicker = false;
 	core::String _dragAndDropName;
 
 	void setCurrentPath(video::OpenFileMode type, const core::String& path);

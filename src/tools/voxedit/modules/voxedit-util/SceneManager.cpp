@@ -7721,10 +7721,13 @@ core::String SceneManager::getSuggestedFilename(const core::String &extension) c
 	if (!fileDesc.empty()) {
 		name = core::string::stripExtension(fileDesc.name);
 		if (ext.empty()) {
-			ext = core::string::extractExtension(fileDesc.name);
+			const core::String extractedExt = core::string::extractExtension(fileDesc.name);
+			if (voxelformat::isSaveFormat(fileDesc.name, false)) {
+				ext = extractedExt;
+			}
 		}
 	}
-	if (ext.empty()) {
+	if (ext.empty() && voxelformat::isSaveFormat(fileDesc.desc.name, false)) {
 		ext = fileDesc.desc.mainExtension();
 	}
 	if (ext.empty()) {

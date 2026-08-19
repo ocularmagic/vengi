@@ -92,12 +92,24 @@ void VoxEdit::onDropFile(void *, const core::String &file) {
 	if (_mainWindow == nullptr) {
 		return;
 	}
+	const core::String &ext = core::string::extractExtension(file);
+	if (ext == "hdr" || ext == "exr") {
+		if (_mainWindow->setHdri(file)) {
+			return;
+		}
+	}
 	if (_mainWindow->isPaletteWidgetDropTarget()) {
 		if (_sceneMgr->importPalette(file, true, true)) {
 			core::String paletteName(core::string::extractFilename(file));
 			_mainWindow->onNewPaletteImport(paletteName, true, true);
 			return;
 		}
+	}
+	if (voxelformat::isMeshFormat(file, false) || ext == "png" || ext == "ase" || ext == "aseprite" || ext == "vxl") {
+		openDialog([this] (const core::String &f, const io::FormatDescription *desc) {
+			_mainWindow->load(f, desc);
+		}, voxelui::FileDialogOptions::build(_paletteCache, false, &_fileDialogPreview), voxelformat::voxelLoad(), file);
+		return;
 	}
 	if (_sceneMgr->import(file)) {
 		return;
@@ -194,11 +206,16 @@ app::AppState VoxEdit::onConstruct() {
 			const core::String &file = args.str("file");
 			if (file.empty()) {
 				const core::String filename = _sceneMgr->getSuggestedFilename();
+#ifdef __EMSCRIPTEN__
+				const core::String saveName = filename.empty() ? "scene.vengi" : filename;
+				_mainWindow->save(saveName, nullptr);
+#else
 				if (filename.empty()) {
 					saveDialog([this] (const core::String &f, const io::FormatDescription *desc) {_mainWindow->save(f, desc); }, voxelui::FileDialogOptions::build(_paletteCache, false, &_fileDialogPreview), voxelformat::voxelSave(), "scene.vengi");
 				} else {
 					_mainWindow->save(filename, nullptr);
 				}
+#endif
 				return;
 			}
 			_mainWindow->save(file, nullptr);
@@ -210,7 +227,12 @@ app::AppState VoxEdit::onConstruct() {
 				return;
 			}
 			const core::String &filename = _sceneMgr->getSuggestedFilename();
+#ifdef __EMSCRIPTEN__
+			const core::String saveName = filename.empty() ? "scene.vengi" : filename;
+			_mainWindow->save(saveName, nullptr);
+#else
 			saveDialog([this] (const core::String &file, const io::FormatDescription *desc) {_mainWindow->save(file, desc); }, voxelui::FileDialogOptions::build(_paletteCache, false, &_fileDialogPreview), voxelformat::voxelSave(), filename);
+#endif
 		}).setArgumentCompleter(command::fileCompleter(io::filesystem(), _lastDirectory)).setHelp(_("Save the current scene to the given file"));
 
 	command::Command::registerCommand("exportselection")

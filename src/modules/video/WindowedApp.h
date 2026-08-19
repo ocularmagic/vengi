@@ -147,7 +147,7 @@ public:
 	 * @brief Wrapper method for @c fileDialog()
 	 * @param[in] formats nullptr terminated list of formats that are used to filter the entries
 	 */
-	void openDialog(const FileDialogSelectionCallback& callback, const FileDialogOptions& options, const io::FormatDescription* formats = nullptr);
+	void openDialog(const FileDialogSelectionCallback& callback, const FileDialogOptions& options, const io::FormatDescription* formats = nullptr, const core::String &filename = "");
 	/**
 	 * @brief Wrapper method for @c fileDialog()
 	 */
@@ -227,8 +227,8 @@ inline void WindowedApp::saveDialog(const FileDialogSelectionCallback& callback,
 	fileDialog(callback, options, OpenFileMode::Save, formats, filename);
 }
 
-inline void WindowedApp::openDialog(const FileDialogSelectionCallback& callback, const FileDialogOptions& options, const io::FormatDescription* formats) {
-	fileDialog(callback, options, OpenFileMode::Open, formats);
+inline void WindowedApp::openDialog(const FileDialogSelectionCallback& callback, const FileDialogOptions& options, const io::FormatDescription* formats, const core::String &filename) {
+	fileDialog(callback, options, OpenFileMode::Open, formats, filename);
 }
 
 inline void WindowedApp::directoryDialog(const FileDialogSelectionCallback& callback, const FileDialogOptions& options) {

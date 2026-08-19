@@ -486,6 +486,20 @@ bool isModelFormat(const core::String &filename) {
 	return false;
 }
 
+bool isSaveFormat(const core::String &filename, bool includeMesh) {
+	const core::String &ext = core::string::extractExtension(filename);
+	for (const io::FormatDescription *desc = voxelformat::voxelSave(); desc->valid(); ++desc) {
+		if (!includeMesh && isMeshFormat(*desc)) {
+			continue;
+		}
+		if (desc->matchesExtension(ext)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool saveFormat(scenegraph::SceneGraph &sceneGraph, const core::String &filename, const io::FormatDescription *desc,
 				const io::ArchivePtr &archive, const SaveContext &ctx) {
 	if (sceneGraph.empty()) {
