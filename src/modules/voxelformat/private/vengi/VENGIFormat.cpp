@@ -103,8 +103,24 @@ bool VENGIFormat::saveNodeData(const scenegraph::SceneGraph &sceneGraph, const s
 		replacement = node.palette().findReplacement(replaceIndex);
 		Log::debug("Looking for a similar color in the palette: %d", replacement);
 	}
-	// solid voxel: color + normal + bone index
-	const int64_t bufSize = region.getHeightInVoxels() * region.getDepthInVoxels() * sizeof(uint8_t) * 4;
+#ifdef __EMSCRIPTEN__
+	auto func = [&stream, replacement, replaceIndex](int, int, int, const voxel::Voxel &voxel) {
+		const bool air = isAir(voxel.getMaterial());
+		stream.writeBool(air);
+		if (!air) {
+			if (voxel.getColor() == replaceIndex) {
+				stream.writeUInt8(replacement);
+			} else {
+				stream.writeUInt8(voxel.getColor());
+			}
+			stream.writeUInt8(voxel.getNormal());
+			stream.writeUInt8(voxel.getBoneIdx());
+		}
+	};
+	voxelutil::visitVolume(*v, func, voxelutil::VisitAll(), voxelutil::VisitorOrder::XYZ);
+#else
+	// solid voxel: bool (air) + uint8 (color) + uint8 (normal) + uint8 (bone index)
+	const int64_t bufSize = (int64_t)region.getHeightInVoxels() * region.getDepthInVoxels() * (sizeof(bool) + 3 * sizeof(uint8_t));
 	core::DynamicArray<io::BufferedReadWriteStream> streamBuffers;
 	streamBuffers.reserve(region.getWidthInVoxels());
 	for (int n = 0; n < region.getWidthInVoxels(); ++n) {
@@ -130,6 +146,7 @@ bool VENGIFormat::saveNodeData(const scenegraph::SceneGraph &sceneGraph, const s
 		wrapBool(stream.writeStream(s))
 		s.trim();
 	}
+#endif
 	return true;
 }
 
@@ -657,7 +674,7 @@ bool VENGIFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const cor
 	}
 	Log::debug("Save scenegraph as vengi");
 	wrapBool(stream->writeUInt32(FourCC('V', 'E', 'N', 'G')))
-	io::ZipWriteStream zipStream(*stream, stream->size());
+	io::ZipWriteStream zipStream(*stream);
 	wrapBool(zipStream.writeUInt32(8))
 	if (!saveNode(sceneGraph, zipStream, sceneGraph.root())) {
 		return false;

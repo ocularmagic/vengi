@@ -17,6 +17,9 @@
 #include "engine-config.h"
 #include "io/Filesystem.h"
 #include "io/FormatDescription.h"
+#ifdef __EMSCRIPTEN__
+#include "io/system/emscripten_browser_file.h"
+#endif
 #include "palette/PaletteFormatDescription.h"
 #include "scenegraph/SceneGraph.h"
 #include "scenegraph/SceneGraphNode.h"
@@ -286,6 +289,19 @@ bool MainWindow::save(const core::String &file, const io::FormatDescription *des
 		return false;
 	}
 	_app->filesystem()->sync();
+#ifdef __EMSCRIPTEN__
+	const io::FilePtr &savedFile = _app->filesystem()->open(fd.name, io::FileMode::SysRead);
+	if (savedFile && savedFile->exists()) {
+		uint8_t *buf = nullptr;
+		const int len = savedFile->read((void **)&buf);
+		if (buf != nullptr && len > 0) {
+			const core::String &downloadName = core::string::extractFilenameWithExtension(fd.name);
+			emscripten_browser_file::download(downloadName.c_str(), "application/octet-stream", buf, (size_t)len);
+		}
+		SDL_free(buf);
+		savedFile->close();
+	}
+#endif
 	Log::info("Saved the model to %s", fd.c_str());
 	return true;
 }
