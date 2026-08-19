@@ -1555,6 +1555,13 @@ fn denoiseMain(@builtin(global_invocation_id) invocation: vec3<u32>) {
             prevX = (ndcX * 0.5 + 0.5) * f32(width);
             prevY = (1.0 - ndcY * 0.5) * f32(height);
         }
+        let inBounds = prevX >= 0.0 && prevX < f32(width) && prevY >= 0.0 && prevY < f32(height);
+        if (!inBounds) {
+            denoisePong[pixelIndex] = vec4<f32>(spatialColor, 0.0);
+            history.count = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+            temporalNext[pixelIndex] = history;
+            return;
+        }
         let px = clamp(i32(floor(prevX)), 0, i32(width) - 1);
         let py = clamp(i32(floor(prevY)), 0, i32(height) - 1);
         let pi = u32(py) * width + u32(px);

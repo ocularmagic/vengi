@@ -488,7 +488,7 @@ void VoxelDDAPathTracer::buildGrids(const scenegraph::SceneGraph &sceneGraph) {
 	if (_scene.ground.enabled()) {
 		const float spanX = _scene.ground.boundsMax.x - _scene.ground.boundsMin.x;
 		const float spanZ = _scene.ground.boundsMax.z - _scene.ground.boundsMin.z;
-		const float pad = glm::max(16.0f, glm::max(spanX, spanZ));
+		const float pad = glm::max(512.0f, glm::max(spanX, spanZ) * 8.0f);
 		_scene.ground.boundsMin.x -= pad;
 		_scene.ground.boundsMax.x += pad;
 		_scene.ground.boundsMin.z -= pad;
